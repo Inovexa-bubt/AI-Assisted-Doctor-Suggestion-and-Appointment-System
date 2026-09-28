@@ -1,8 +1,9 @@
 # Screens
 
 Every screen in the system, by role. The Milestone 1 frontend (`apps/web`) implements all of them on
-sample data and serves as the high-fidelity wireframes; screenshots for the Word version of this
-document are taken from it.
+sample data and serves as the high-fidelity wireframes. For the Word version of this document, take
+screenshots with `node apps/web/e2e/screenshots.mjs <folder> <route> [width] [en|bn]` while
+`npm run dev` is running.
 
 All screens work in Bangla and English (toggle in the header, remembered per browser) and on phones
 from 360 px wide. Patient screens are designed for phones first; staff screens for a desk computer,
