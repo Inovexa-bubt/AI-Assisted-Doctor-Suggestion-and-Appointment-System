@@ -15,11 +15,11 @@ client before backend work starts on 1 November.
 
 ## Repository layout
 
-| Path              | What it is                                                                     |
-| ----------------- | ------------------------------------------------------------------------------ |
-| `apps/web`        | React frontend (Vite, TypeScript, Tailwind CSS)                                |
+| Path              | What it is                                                                    |
+| ----------------- | ----------------------------------------------------------------------------- |
+| `apps/web`        | React frontend (Vite, TypeScript, Tailwind CSS)                               |
 | `packages/shared` | Types, domain rules and the sample-data generator, shared with the future API |
-| `docs/design`     | System design: architecture, data model, API contract, UML, screens            |
+| `docs/design`     | System design: architecture, data model, API contract, UML, screens           |
 
 The backend (`apps/api`, Node.js + Express + PostgreSQL) starts on 1 November 2026.
 

@@ -5,13 +5,13 @@ covers the SOW task "Design the system architecture, database and user interface
 deliverable "System design document: use case, class, sequence and activity diagrams, ER diagram and
 UI wireframes".
 
-| Document                         | Contents                                                             |
-| -------------------------------- | -------------------------------------------------------------------- |
-| This page                        | Goals, architecture, technology, AI pipeline, security and privacy   |
-| [Data model](data-model.md)      | ER diagram, tables, constraints, slot locking                        |
-| [API contract](api.md)           | REST endpoints, payloads, errors, realtime events                    |
-| [UML diagrams](uml.md)           | Use case, class, sequence, activity and state diagrams               |
-| [Screens](screens.md)            | Screen inventory per role; the Milestone 1 frontend is the wireframe |
+| Document                    | Contents                                                             |
+| --------------------------- | -------------------------------------------------------------------- |
+| This page                   | Goals, architecture, technology, AI pipeline, security and privacy   |
+| [Data model](data-model.md) | ER diagram, tables, constraints, slot locking                        |
+| [API contract](api.md)      | REST endpoints, payloads, errors, realtime events                    |
+| [UML diagrams](uml.md)      | Use case, class, sequence, activity and state diagrams               |
+| [Screens](screens.md)       | Screen inventory per role; the Milestone 1 frontend is the wireframe |
 
 Status: **draft v0.1, 28 September 2026.** Written before the requirements interviews; items marked
 _To confirm_ are questions for those interviews.
@@ -64,33 +64,33 @@ flowchart LR
   J --> G
 ```
 
-| Part            | Responsibility                                                                         |
-| --------------- | -------------------------------------------------------------------------------------- |
-| React SPA       | All patient and staff screens, Bangla/English, mobile-first                            |
-| API             | REST endpoints, validation, auth, booking rules, AI orchestration                      |
-| Socket.IO       | Pushes queue changes to patients and staff watching a doctor's session                 |
-| Scheduler       | Sends reminder SMS at the admin-set time; clears expired slot holds                    |
-| PostgreSQL      | All data; enforces "one active booking per slot" with a unique index                   |
-| LLM service     | Specialty and urgency suggestion, follow-up questions, explanation, pre-visit summary  |
-| Speech-to-text  | Turns a spoken problem into text; the audio is discarded after transcription           |
-| SMS gateway     | OTP codes, confirmations, reschedules, cancellations, reminders                        |
+| Part           | Responsibility                                                                        |
+| -------------- | ------------------------------------------------------------------------------------- |
+| React SPA      | All patient and staff screens, Bangla/English, mobile-first                           |
+| API            | REST endpoints, validation, auth, booking rules, AI orchestration                     |
+| Socket.IO      | Pushes queue changes to patients and staff watching a doctor's session                |
+| Scheduler      | Sends reminder SMS at the admin-set time; clears expired slot holds                   |
+| PostgreSQL     | All data; enforces "one active booking per slot" with a unique index                  |
+| LLM service    | Specialty and urgency suggestion, follow-up questions, explanation, pre-visit summary |
+| Speech-to-text | Turns a spoken problem into text; the audio is discarded after transcription          |
+| SMS gateway    | OTP codes, confirmations, reschedules, cancellations, reminders                       |
 
 The API, Socket.IO server and scheduler run in one Node.js process at this hospital's scale. They
 are separate modules, so they can be split later without code changes.
 
 ### 2.1 Technology
 
-| Layer     | Choice                                                        | Why                                                      |
-| --------- | ------------------------------------------------------------- | -------------------------------------------------------- |
-| Frontend  | React 19, Vite, TypeScript, Tailwind CSS, React Router        | Decision D1; fast builds, typed end to end               |
-| Data      | TanStack Query over a typed `fetch` client                    | Caching, refetch on focus, simple cache invalidation     |
-| i18n      | i18next; Bangla digits and dates via `Intl` (`bn-BD`)         | Patients read Bangla; staff may prefer English           |
-| Mock API  | Mock Service Worker (MSW) in the browser                      | Milestone 1 without a backend; same URLs and payloads    |
-| Backend   | Node.js 22, Express, TypeScript                               | Decision D1                                              |
-| Database  | PostgreSQL 16 with Prisma migrations                          | Partial unique indexes for slot locking; typed queries   |
-| Realtime  | Socket.IO                                                     | Rooms per doctor session; reconnects on flaky mobile data |
-| Tests     | Vitest (unit), Playwright (end-to-end)                        | Same runner for web, shared code and API                 |
-| Shared    | `packages/shared`: types, domain rules, sample-data generator | One definition of slots, queue and emergency rules       |
+| Layer    | Choice                                                        | Why                                                       |
+| -------- | ------------------------------------------------------------- | --------------------------------------------------------- |
+| Frontend | React 19, Vite, TypeScript, Tailwind CSS, React Router        | Decision D1; fast builds, typed end to end                |
+| Data     | TanStack Query over a typed `fetch` client                    | Caching, refetch on focus, simple cache invalidation      |
+| i18n     | i18next; Bangla digits and dates via `Intl` (`bn-BD`)         | Patients read Bangla; staff may prefer English            |
+| Mock API | Mock Service Worker (MSW) in the browser                      | Milestone 1 without a backend; same URLs and payloads     |
+| Backend  | Node.js 22, Express, TypeScript                               | Decision D1                                               |
+| Database | PostgreSQL 16 with Prisma migrations                          | Partial unique indexes for slot locking; typed queries    |
+| Realtime | Socket.IO                                                     | Rooms per doctor session; reconnects on flaky mobile data |
+| Tests    | Vitest (unit), Playwright (end-to-end)                        | Same runner for web, shared code and API                  |
+| Shared   | `packages/shared`: types, domain rules, sample-data generator | One definition of slots, queue and emergency rules        |
 
 ### 2.2 Frontend first, backend later
 

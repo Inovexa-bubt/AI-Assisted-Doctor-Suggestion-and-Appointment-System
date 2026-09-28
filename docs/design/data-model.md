@@ -129,20 +129,20 @@ and `setting` (key, JSON value).
 
 ## Tables
 
-| Table            | Notes                                                                                            |
-| ---------------- | ------------------------------------------------------------------------------------------------ |
-| `specialty`      | The client's specialty list. The AI may only suggest one of these.                               |
-| `doctor`         | Profile shown to patients. Deactivating hides the doctor without losing history.                 |
-| `schedule_rule`  | One row per weekly chamber session. A doctor can have several per day (morning and evening).     |
-| `leave_day`      | Inserting one cancels that day's active appointments and queues SMS (one transaction).           |
-| `patient`        | Only what booking needs: name, phone, age, sex.                                                  |
-| `appointment`    | The booking and its live status. `serial` is the position in the session.                       |
-| `triage_session` | The AI conversation. No name or phone. Linked to the patient only when they book.                |
-| `queue_state`    | Which appointment each doctor is seeing now, per date.                                           |
-| `staff_user`     | Admin, front-desk and doctor accounts. A doctor account links to one `doctor` row.               |
-| `sms_message`    | Every SMS the system sends, for audit and retry. OTP bodies are stored with the code masked.     |
-| `otp_code`       | Hashed one-time codes; 5-minute expiry, 5 attempts.                                              |
-| `setting`        | `reminder` (`daysBefore`, `time`, default 1 day before at 19:00); `booking` (`openDays`, 14).   |
+| Table            | Notes                                                                                         |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| `specialty`      | The client's specialty list. The AI may only suggest one of these.                            |
+| `doctor`         | Profile shown to patients. Deactivating hides the doctor without losing history.              |
+| `schedule_rule`  | One row per weekly chamber session. A doctor can have several per day (morning and evening).  |
+| `leave_day`      | Inserting one cancels that day's active appointments and queues SMS (one transaction).        |
+| `patient`        | Only what booking needs: name, phone, age, sex.                                               |
+| `appointment`    | The booking and its live status. `serial` is the position in the session.                     |
+| `triage_session` | The AI conversation. No name or phone. Linked to the patient only when they book.             |
+| `queue_state`    | Which appointment each doctor is seeing now, per date.                                        |
+| `staff_user`     | Admin, front-desk and doctor accounts. A doctor account links to one `doctor` row.            |
+| `sms_message`    | Every SMS the system sends, for audit and retry. OTP bodies are stored with the code masked.  |
+| `otp_code`       | Hashed one-time codes; 5-minute expiry, 5 attempts.                                           |
+| `setting`        | `reminder` (`daysBefore`, `time`, default 1 day before at 19:00); `booking` (`openDays`, 14). |
 
 ## Appointment status
 
@@ -192,14 +192,14 @@ Front-desk bookings skip the hold and insert `booked` directly; the same index p
 
 ## Indexes
 
-| Index                                       | Used by                              |
-| ------------------------------------------- | ------------------------------------ |
-| `appointment (doctor_id, date, serial)`     | Queue, front-desk and doctor lists   |
-| `appointment (patient_id, date)`            | My appointments                      |
-| `appointment (date, status)`                | Reminders, analytics                 |
-| `patient (phone)` unique                    | Login, front-desk search             |
-| `leave_day (doctor_id, date)` unique        | Availability                         |
-| `triage_session (created_at)`               | Analytics, retention clean-up        |
+| Index                                   | Used by                            |
+| --------------------------------------- | ---------------------------------- |
+| `appointment (doctor_id, date, serial)` | Queue, front-desk and doctor lists |
+| `appointment (patient_id, date)`        | My appointments                    |
+| `appointment (date, status)`            | Reminders, analytics               |
+| `patient (phone)` unique                | Login, front-desk search           |
+| `leave_day (doctor_id, date)` unique    | Availability                       |
+| `triage_session (created_at)`           | Analytics, retention clean-up      |
 
 ## Retention
 
