@@ -8,8 +8,9 @@ export function formatNumber(n: number, lang: Lang, options?: Intl.NumberFormatO
   return new Intl.NumberFormat(locale(lang), options).format(n)
 }
 
+/** 'Tk 1,200' or '১,২০০ টাকা', as written in Bangladesh. */
 export function formatMoney(taka: number, lang: Lang): string {
-  return `৳${formatNumber(taka, lang)}`
+  return lang === 'bn' ? `${formatNumber(taka, lang)} টাকা` : `Tk ${formatNumber(taka, lang)}`
 }
 
 export function formatPercent(ratio: number, lang: Lang): string {
