@@ -425,6 +425,7 @@ export const en = {
     problemsNote: 'From what people told the assistant',
     range: '{{from}} – {{to}}',
     count: 'Count',
+    table: 'Table',
   },
   errors: {
     SLOT_TAKEN: 'Someone else just took this slot. Please choose another.',

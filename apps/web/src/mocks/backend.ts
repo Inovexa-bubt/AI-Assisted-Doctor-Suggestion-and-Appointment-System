@@ -894,6 +894,7 @@ export class MockBackend {
     return {
       doctorId: doctor.id,
       date,
+      onLeave: day?.onLeave ?? false,
       sessions: day?.sessions ?? [],
       nowServing: appointments.find((a) => a.status === 'in_consultation')?.serial ?? null,
       appointments: appointments.map((a) => this.view(a, true)),

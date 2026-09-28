@@ -34,6 +34,23 @@ export function formatDate(date: string, lang: Lang, style: DateStyle = 'medium'
   )
 }
 
+/** An ISO timestamp as a Dhaka date and time, e.g. '28 Sept, 5:30 PM'. */
+export function formatDateTime(iso: string, lang: Lang): string {
+  const d = new Date(iso)
+  const date = new Intl.DateTimeFormat(locale(lang), {
+    timeZone: 'Asia/Dhaka',
+    day: 'numeric',
+    month: 'short',
+  }).format(d)
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Dhaka',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d)
+  return `${date}, ${formatTime(time, lang)}`
+}
+
 function banglaPeriod(hour: number): string {
   if (hour >= 4 && hour < 6) return 'ভোর'
   if (hour < 12 && hour >= 6) return 'সকাল'

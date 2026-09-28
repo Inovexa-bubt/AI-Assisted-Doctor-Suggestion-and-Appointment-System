@@ -164,6 +164,7 @@ export interface QueueStatus {
 export interface DaySheet {
   doctorId: string
   date: string
+  onLeave: boolean
   sessions: AvailabilitySession[]
   nowServing: number | null
   appointments: AppointmentView[]

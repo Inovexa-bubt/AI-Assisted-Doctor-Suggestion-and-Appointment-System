@@ -144,7 +144,7 @@ bookings outside the new hours.
 
 | Method | Path                                 | Body / response                                                                          |
 | ------ | ------------------------------------ | ---------------------------------------------------------------------------------------- |
-| GET    | `/frontdesk/day?doctorId=&date=`     | `DaySheet`: sessions, appointments with patient and summary, `nowServing`                |
+| GET    | `/frontdesk/day?doctorId=&date=`     | `DaySheet`: sessions, `onLeave`, appointments with patient and summary, `nowServing`     |
 | POST   | `/frontdesk/appointments/:id/status` | `{ status: "arrived" \| "seen" \| "no_show" }` → `AppointmentView`                       |
 | POST   | `/frontdesk/queue/next`              | `{ doctorId, date }` → `DaySheet`                                                        |
 | GET    | `/frontdesk/patients?phone=`         | `Patient` or 404                                                                         |

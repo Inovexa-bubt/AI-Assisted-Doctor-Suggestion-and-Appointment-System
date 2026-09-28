@@ -426,6 +426,7 @@ export const bn: Translation = {
     problemsNote: 'মানুষ সহকারীকে যা বলেছেন তা থেকে',
     range: '{{from}} – {{to}}',
     count: 'সংখ্যা',
+    table: 'টেবিল',
   },
   errors: {
     SLOT_TAKEN: 'এইমাত্র অন্য কেউ সময়টি নিয়ে নিয়েছেন। অনুগ্রহ করে অন্য সময় বেছে নিন।',
