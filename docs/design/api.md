@@ -95,6 +95,7 @@ A new phone number gets `needsProfile: true` and a session that can only call `/
 | Method | Path                           | Body / query                                          | Response             |
 | ------ | ------------------------------ | ----------------------------------------------------- | -------------------- |
 | POST   | `/appointments/holds`          | `{ doctorId, date, start, triageId?, rescheduleOf? }` | `Appointment` (held) |
+| GET    | `/appointments/:id`            |                                                       | `AppointmentView`    |
 | POST   | `/appointments/:id/confirm`    |                                                       | `AppointmentView`    |
 | DELETE | `/appointments/:id/hold`       |                                                       | 204                  |
 | GET    | `/appointments?scope=upcoming` | `scope` is `upcoming` or `past`                       | `AppointmentView[]`  |
@@ -103,6 +104,8 @@ A new phone number gets `needsProfile: true` and a session that can only call `/
 
 - **Reschedule** is a hold with `rescheduleOf` set, then a confirm. Confirming cancels the old
   appointment (`cancel_reason = rescheduled`) in the same transaction and sends a reschedule SMS.
+- `GET /appointments/:id` returns a held appointment for the confirm screen (410 once the hold
+  expires); for a reschedule it includes `rescheduledFrom`.
 - **Rebook** needs no endpoint: "Book again" opens the doctor's availability.
 - Confirming links the triage session (if any) and generates the pre-visit summary.
 

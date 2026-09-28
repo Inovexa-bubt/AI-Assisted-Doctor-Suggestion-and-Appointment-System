@@ -141,6 +141,8 @@ export interface AppointmentView extends Appointment {
   patient?: Patient
   summary?: PreVisitSummary
   room?: string
+  /** For a held reschedule: the booking it will replace. */
+  rescheduledFrom?: AppointmentView
 }
 
 export interface QueueStatus {

@@ -1,0 +1,40 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter Variable', 'Hind Siliguri', ui-sans-serif, system-ui, sans-serif;
+
+  --color-brand-50: #eefbf9;
+  --color-brand-100: #d5f4ef;
+  --color-brand-200: #aee8df;
+  --color-brand-300: #7bd5c9;
+  --color-brand-400: #47bbae;
+  --color-brand-500: #25a094;
+  --color-brand-600: #148176;
+  --color-brand-700: #12675f;
+  --color-brand-800: #13534d;
+  --color-brand-900: #134540;
+  --color-brand-950: #042825;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+  /* Bangla script needs more room between lines. */
+  :lang(bn) body {
+    line-height: 1.65;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand-600;
+  }
+  button,
+  [role='button'] {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+}

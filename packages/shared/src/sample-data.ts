@@ -349,7 +349,7 @@ export function generateSampleData(options: { now?: Date; seed?: number } = {}):
           createdDate,
           `${String(rng.int(8, 21)).padStart(2, '0')}:${String(rng.int(0, 59)).padStart(2, '0')}`,
         )
-        if (created > now) created = new Date(now.getTime() - rng.int(5, 600) * 60_000)
+        if (created >= now) created = new Date(now.getTime() - rng.int(5, 600) * 60_000)
 
         let status: AppointmentStatus
         if (offset < 0) status = pastStatus(rng)
@@ -422,7 +422,7 @@ export function generateSampleData(options: { now?: Date; seed?: number } = {}):
       date,
       `${String(rng.int(7, 23)).padStart(2, '0')}:${String(rng.int(0, 59)).padStart(2, '0')}`,
     )
-    if (created > now) created = new Date(now.getTime() - rng.int(10, 300) * 60_000)
+    if (created >= now) created = new Date(now.getTime() - rng.int(10, 300) * 60_000)
     triage.push(
       makeTriage(
         rng,
