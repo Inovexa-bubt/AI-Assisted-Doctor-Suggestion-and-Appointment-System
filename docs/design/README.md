@@ -5,13 +5,14 @@ covers the SOW task "Design the system architecture, database and user interface
 deliverable "System design document: use case, class, sequence and activity diagrams, ER diagram and
 UI wireframes".
 
-| Document                    | Contents                                                             |
-| --------------------------- | -------------------------------------------------------------------- |
-| This page                   | Goals, architecture, technology, AI pipeline, security and privacy   |
-| [Data model](data-model.md) | ER diagram, tables, constraints, slot locking                        |
-| [API contract](api.md)      | REST endpoints, payloads, errors, realtime events                    |
-| [UML diagrams](uml.md)      | Use case, class, sequence, activity and state diagrams               |
-| [Screens](screens.md)       | Screen inventory per role; the Milestone 1 frontend is the wireframe |
+| Document                    | Contents                                                            |
+| --------------------------- | ------------------------------------------------------------------- |
+| This page                   | Goals, architecture, technology, AI pipeline, security and privacy  |
+| [Data model](data-model.md) | ER diagram, tables, constraints, slot locking                       |
+| [API contract](api.md)      | REST endpoints, payloads, errors, realtime events                   |
+| [UML diagrams](uml.md)      | Use case, class, sequence, activity and state diagrams              |
+| [Screens](screens.md)       | Screen inventory per role and the Milestone 1 demo script           |
+| [Wireframes](wireframes/)   | Low-fidelity wireframe of every screen, with notes (SVG, for Figma) |
 
 Status: **draft v0.1, 28 September 2026.** Written before the requirements interviews; items marked
 _To confirm_ are questions for those interviews.

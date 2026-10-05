@@ -1,7 +1,8 @@
 # Screens
 
 Every screen in the system, by role. The Milestone 1 frontend (`apps/web`) implements all of them on
-sample data and serves as the high-fidelity wireframes. For the Word version of this document, take
+sample data. Low-fidelity wireframes of every screen, with notes on behaviour, are in
+[`wireframes/`](wireframes/README.md). For the Word version of this document, take
 screenshots with `node apps/web/e2e/screenshots.mjs <folder> <route> [width] [en|bn]` while
 `npm run dev` is running.
 
