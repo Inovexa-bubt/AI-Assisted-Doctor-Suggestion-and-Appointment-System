@@ -156,6 +156,12 @@ flowchart TD
   each patient an SMS.
 - **Front-desk booking:** staff find or register a patient by phone number (no OTP, since the patient
   is on the phone or at the desk) and book directly. The same unique index protects the slot.
+- **Online cut-off:** online booking for a session closes a set time before it starts (admin setting,
+  default 60 minutes). The remaining free slots stay bookable by the front desk.
+- **One upcoming booking per doctor:** a patient with an upcoming appointment with a doctor
+  reschedules it instead of booking a second one online.
+- **Late arrival:** a patient marked no-show who turns up can be marked arrived again; call-next picks
+  them by serial like everyone else who has arrived.
 
 ## 5. Live queue
 
@@ -187,6 +193,9 @@ refetch the queue status.
   convenience.
 
 ## 7. Open questions for the requirements interviews
+
+SRS v0.1 (`docs/requirements`) records draft answers from synthetic interviews; the real interviews
+confirm or change them.
 
 1. Which specialties and doctors take part, and what are their chamber days, times, slot lengths and
    patient limits?
