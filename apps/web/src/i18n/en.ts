@@ -138,6 +138,7 @@ export const en = {
     onLeave: 'On leave',
     noChamber: 'No chamber',
     full: 'Full',
+    closed: 'Closed online',
     free_one: '{{n}} free',
     free_other: '{{n}} free',
     slotsHint: 'Times are Dhaka time. Serial numbers follow the order of the slots.',
@@ -145,6 +146,8 @@ export const en = {
     selected: 'Selected: {{date}}, {{time}} (serial {{serial}})',
     book: 'Book this slot',
     noSlotsDay: 'No open slots on this day.',
+    sessionClosed:
+      'Online booking for this session has closed. For a serial, call or visit the front desk.',
     beyondWindow: 'Booking opens {{n}} days ahead.',
   },
   login: {
@@ -312,6 +315,10 @@ export const en = {
     book: 'Book',
     bookedToast: 'Booked serial {{n}} for {{name}}.',
     ageSex: '{{age}} y · {{sex}}',
+    arrivedLate: 'Arrived late',
+    firstVisit: 'First visit',
+    previousVisits_one: 'Seen once before · last {{date}}',
+    previousVisits_other: 'Seen {{n}} times before · last {{date}}',
   },
   doctorView: {
     title: 'My patients',
@@ -383,6 +390,9 @@ export const en = {
       time: 'Time',
       bookingTitle: 'Booking window',
       openDays: 'Days ahead patients can book',
+      closeBefore: 'Online booking closes (minutes)',
+      closeBeforeHint:
+        'How long before each session starts. After that, the front desk can still book the free slots for phone and walk-in patients.',
     },
     sms: {
       title: 'SMS log',
@@ -432,6 +442,10 @@ export const en = {
     HOLD_EXPIRED: 'The 5-minute hold has expired. Please choose the slot again.',
     DOCTOR_ON_LEAVE: 'The doctor is on leave that day.',
     SLOT_IN_PAST: 'This slot has already started.',
+    BOOKING_CLOSED:
+      'Online booking for this session has closed. Please call or visit the front desk.',
+    ALREADY_BOOKED:
+      'You already have an upcoming appointment with this doctor. To change the time, reschedule it from My appointments.',
     OTP_INVALID: 'That code is not right.',
     OTP_EXPIRED: 'The code has expired. Ask for a new one.',
     TOO_MANY_ATTEMPTS: 'Too many tries. Ask for a new code.',

@@ -18,28 +18,28 @@ and the backend. In Milestone 1 the mock API in `apps/web/src/mocks` implements 
 { "error": { "code": "SLOT_TAKEN", "message": "Someone else just took this slot." } }
 ```
 
-| Status | `code`                                          | When                                    |
-| ------ | ----------------------------------------------- | --------------------------------------- |
-| 400    | `VALIDATION`                                    | Body or query fails validation          |
-| 401    | `UNAUTHENTICATED`                               | No valid session                        |
-| 403    | `FORBIDDEN`                                     | Signed in, but the role may not do this |
-| 404    | `NOT_FOUND`                                     | Unknown ID                              |
-| 409    | `SLOT_TAKEN`, `DOCTOR_ON_LEAVE`, `SLOT_IN_PAST` | The slot cannot be held or booked       |
-| 410    | `HOLD_EXPIRED`                                  | Confirming after the 5-minute hold      |
-| 422    | `OTP_INVALID`, `OTP_EXPIRED`                    | Wrong or old code                       |
-| 429    | `TOO_MANY_ATTEMPTS`                             | OTP or login rate limit                 |
+| Status | `code`                                                                              | When                                    |
+| ------ | ----------------------------------------------------------------------------------- | --------------------------------------- |
+| 400    | `VALIDATION`                                                                        | Body or query fails validation          |
+| 401    | `UNAUTHENTICATED`                                                                   | No valid session                        |
+| 403    | `FORBIDDEN`                                                                         | Signed in, but the role may not do this |
+| 404    | `NOT_FOUND`                                                                         | Unknown ID                              |
+| 409    | `SLOT_TAKEN`, `DOCTOR_ON_LEAVE`, `SLOT_IN_PAST`, `BOOKING_CLOSED`, `ALREADY_BOOKED` | The slot cannot be held or booked       |
+| 410    | `HOLD_EXPIRED`                                                                      | Confirming after the 5-minute hold      |
+| 422    | `OTP_INVALID`, `OTP_EXPIRED`                                                        | Wrong or old code                       |
+| 429    | `TOO_MANY_ATTEMPTS`                                                                 | OTP or login rate limit                 |
 
 ## Public (no sign-in)
 
-| Method | Path                                                | Response            | Notes                                                       |
-| ------ | --------------------------------------------------- | ------------------- | ----------------------------------------------------------- |
-| GET    | `/specialties`                                      | `Specialty[]`       | Active specialties, in display order                        |
-| GET    | `/doctors?specialtyId=&q=`                          | `DoctorListItem[]`  | `q` matches Bangla or English name; includes `nextSlot`     |
-| GET    | `/doctors/:id`                                      | `Doctor`            |                                                             |
-| GET    | `/doctors/:id/availability?from=YYYY-MM-DD&days=14` | `AvailabilityDay[]` | Sessions and slots per day; `onLeave` days have no sessions |
-| POST   | `/triage`                                           | `TriageResult`      | Body `{ problem, lang }`. Starts an AI conversation         |
-| POST   | `/triage/:id/answers`                               | `TriageResult`      | Body `{ answer }`. Answers the pending follow-up question   |
-| POST   | `/speech/transcribe`                                | `{ text }`          | `multipart/form-data`: `audio`, `lang`. Audio is not stored |
+| Method | Path                                                | Response            | Notes                                                                                                      |
+| ------ | --------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------- |
+| GET    | `/specialties`                                      | `Specialty[]`       | Active specialties, in display order                                                                       |
+| GET    | `/doctors?specialtyId=&q=`                          | `DoctorListItem[]`  | `q` matches Bangla or English name; includes `nextSlot`                                                    |
+| GET    | `/doctors/:id`                                      | `Doctor`            |                                                                                                            |
+| GET    | `/doctors/:id/availability?from=YYYY-MM-DD&days=14` | `AvailabilityDay[]` | Sessions and slots per day; `onLeave` days have no sessions; `closed` sessions are past the online cut-off |
+| POST   | `/triage`                                           | `TriageResult`      | Body `{ problem, lang }`. Starts an AI conversation                                                        |
+| POST   | `/triage/:id/answers`                               | `TriageResult`      | Body `{ answer }`. Answers the pending follow-up question                                                  |
+| POST   | `/speech/transcribe`                                | `{ text }`          | `multipart/form-data`: `audio`, `lang`. Audio is not stored                                                |
 
 ### Triage result
 
@@ -107,6 +107,12 @@ A new phone number gets `needsProfile: true` and a session that can only call `/
 - `GET /appointments/:id` returns a held appointment for the confirm screen (410 once the hold
   expires); for a reschedule it includes `rescheduledFrom`.
 - **Rebook** needs no endpoint: "Book again" opens the doctor's availability.
+- **One upcoming booking per doctor.** A hold without `rescheduleOf` fails with `ALREADY_BOOKED`
+  when the patient already has a booked, arrived or in-consultation appointment with that doctor
+  today or later. The patient reschedules it instead. Front-desk bookings are not limited.
+- **Online cut-off.** Online booking for a session closes `Settings.booking.closeMinutesBefore`
+  minutes (default 60) before the session starts: availability marks the session `closed` and a
+  hold fails with `BOOKING_CLOSED`. The front desk can still book its free slots.
 - Confirming links the triage session (if any) and generates the pre-visit summary.
 
 ## Staff sign-in
@@ -142,14 +148,14 @@ bookings outside the new hours.
 
 ## Front desk (`front_desk`, `admin`)
 
-| Method | Path                                 | Body / response                                                                          |
-| ------ | ------------------------------------ | ---------------------------------------------------------------------------------------- |
-| GET    | `/frontdesk/day?doctorId=&date=`     | `DaySheet`: sessions, `onLeave`, appointments with patient and summary, `nowServing`     |
-| POST   | `/frontdesk/appointments/:id/status` | `{ status: "arrived" \| "seen" \| "no_show" }` → `AppointmentView`                       |
-| POST   | `/frontdesk/queue/next`              | `{ doctorId, date }` → `DaySheet`                                                        |
-| GET    | `/frontdesk/patients?phone=`         | `Patient` or 404                                                                         |
-| POST   | `/frontdesk/patients`                | `{ name, phone, age, sex }` → `Patient` (no OTP)                                         |
-| POST   | `/frontdesk/appointments`            | `{ patientId, doctorId, date, start, source: "phone" \| "walk_in" }` → `AppointmentView` |
+| Method | Path                                 | Body / response                                                                                                                                                                    |
+| ------ | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/frontdesk/day?doctorId=&date=`     | `DaySheet`: sessions (no online cut-off), `onLeave`, appointments with patient, summary and `previousVisits` (`{ count, last }`: earlier seen visits to this doctor), `nowServing` |
+| POST   | `/frontdesk/appointments/:id/status` | `{ status: "arrived" \| "seen" \| "no_show" }` → `AppointmentView`. A no-show can be marked arrived again (late arrival)                                                           |
+| POST   | `/frontdesk/queue/next`              | `{ doctorId, date }` → `DaySheet`                                                                                                                                                  |
+| GET    | `/frontdesk/patients?phone=`         | `Patient` or 404                                                                                                                                                                   |
+| POST   | `/frontdesk/patients`                | `{ name, phone, age, sex }` → `Patient` (no OTP)                                                                                                                                   |
+| POST   | `/frontdesk/appointments`            | `{ patientId, doctorId, date, start, source: "phone" \| "walk_in" }` → `AppointmentView`                                                                                           |
 
 ## Doctor (`doctor`)
 

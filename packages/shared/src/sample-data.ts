@@ -2,7 +2,7 @@
 // to "today", for the Milestone 1 demo and for testing. Every name is invented. The same seed and
 // date always produce the same data.
 
-import { DEFAULT_OPEN_DAYS } from './constants.ts'
+import { DEFAULT_CLOSE_MINUTES_BEFORE, DEFAULT_OPEN_DAYS } from './constants.ts'
 import { Rng, hashSeed } from './random.ts'
 import { daySlots } from './slots.ts'
 import { smsBody } from './sms.ts'
@@ -63,7 +63,7 @@ export interface SampleData {
 
 export const DEFAULT_SETTINGS: Settings = {
   reminder: { daysBefore: 1, time: '19:00' },
-  booking: { openDays: DEFAULT_OPEN_DAYS },
+  booking: { openDays: DEFAULT_OPEN_DAYS, closeMinutesBefore: DEFAULT_CLOSE_MINUTES_BEFORE },
 }
 
 const DAY: Record<string, Weekday> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }

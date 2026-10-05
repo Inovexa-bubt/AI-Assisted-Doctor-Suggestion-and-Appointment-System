@@ -290,11 +290,18 @@ describe('front desk and queue', () => {
 
   it('shows a patient how many are ahead and when they will be seen', () => {
     const { patient } = register('01711000030')
-    const slot = openSlots(api.getAvailability('d01', {})).find((s) => s.date === '2026-10-04')!
-    const booked = api.confirm(
-      patient,
-      api.hold(patient, { doctorId: 'd01', date: slot.date, start: slot.start }).id,
-    )
+    // The session is under way, so only the front desk can still book it.
+    const slot = api
+      .daySheet('d01', '2026-10-04')
+      .sessions.flatMap((s) => s.slots)
+      .find((s) => s.available)!
+    const booked = api.bookForPatient({
+      patientId: patient.id,
+      doctorId: 'd01',
+      date: slot.date,
+      start: slot.start,
+      source: 'walk_in',
+    })
     const status = api.queueStatus(patient, booked.id)
     expect(status.ahead).toBeGreaterThan(0)
     expect(status.nowServing).not.toBeNull()
@@ -330,6 +337,99 @@ describe('front desk and queue', () => {
         }),
       ),
     ).toBe('SLOT_TAKEN')
+  })
+})
+
+describe('rules from the requirements interviews', () => {
+  it('keeps one upcoming online booking per doctor; a second one is a reschedule', () => {
+    const { patient } = register('01711000050')
+    const [first, second] = openSlots(api.getAvailability('d02', {}))
+    const booked = api.confirm(
+      patient,
+      api.hold(patient, { doctorId: 'd02', date: first!.date, start: first!.start }).id,
+    )
+    expect(
+      errorCode(() =>
+        api.hold(patient, { doctorId: 'd02', date: second!.date, start: second!.start }),
+      ),
+    ).toBe('ALREADY_BOOKED')
+    const moved = api.hold(patient, {
+      doctorId: 'd02',
+      date: second!.date,
+      start: second!.start,
+      rescheduleOf: booked.id,
+    })
+    expect(moved.status).toBe('held')
+    // Another doctor is fine.
+    const other = firstOpenSlot('d03')
+    expect(
+      api.hold(patient, { doctorId: 'd03', date: other.date, start: other.start }).status,
+    ).toBe('held')
+  })
+
+  it('closes online booking before a session, but the front desk can still book it', () => {
+    // 18:10 on Sunday: Dr. Mahmudul Hasan's 17:00–21:00 session is under way.
+    const online = api.getAvailability('d01', { days: 1 })[0]!.sessions[0]!
+    expect(online.closed).toBe(true)
+    expect(online.slots.some((s) => s.available)).toBe(false)
+    const desk = api.daySheet('d01', '2026-10-04').sessions[0]!
+    expect(desk.closed).toBeUndefined()
+    const free = desk.slots.find((s) => s.available)!
+
+    const { patient } = register('01711000051')
+    expect(
+      errorCode(() => api.hold(patient, { doctorId: 'd01', date: free.date, start: free.start })),
+    ).toBe('BOOKING_CLOSED')
+    const booked = api.bookForPatient({
+      patientId: patient.id,
+      doctorId: 'd01',
+      date: free.date,
+      start: free.start,
+      source: 'walk_in',
+    })
+    expect(booked.status).toBe('booked')
+  })
+
+  it('lets the admin set the cut-off, within limits', () => {
+    expect(api.getSettings().booking.closeMinutesBefore).toBe(60)
+    const reminder = api.getSettings().reminder
+    expect(
+      errorCode(() =>
+        api.putSettings({ reminder, booking: { openDays: 14, closeMinutesBefore: 300 } }),
+      ),
+    ).toBe('VALIDATION')
+    api.putSettings({ reminder, booking: { openDays: 14, closeMinutesBefore: 30 } })
+    expect(api.getSettings().booking.closeMinutesBefore).toBe(30)
+    // Settings saved before the cut-off existed fall back to the default.
+    db.put('settings', { id: 'settings', reminder, booking: { openDays: 14 } } as never)
+    expect(api.getSettings().booking.closeMinutesBefore).toBe(60)
+  })
+
+  it('checks in a no-show who turns up late', () => {
+    const booked = api
+      .daySheet('d01', '2026-10-04')
+      .appointments.find((a) => a.status === 'booked')!
+    api.setStatus(booked.id, { status: 'no_show' })
+    expect(api.setStatus(booked.id, { status: 'arrived' }).status).toBe('arrived')
+  })
+
+  it('tells staff whether each patient has seen this doctor before', () => {
+    const sheet = api.daySheet('d01', '2026-10-04')
+    for (const a of sheet.appointments) {
+      const earlier = db
+        .all('appointments')
+        .filter(
+          (b) =>
+            b.patientId === a.patientId &&
+            b.doctorId === 'd01' &&
+            b.status === 'seen' &&
+            b.date < a.date,
+        )
+        .map((b) => b.date)
+        .sort()
+      expect(a.previousVisits).toEqual({ count: earlier.length, last: earlier.at(-1) ?? null })
+    }
+    expect(sheet.appointments.some((a) => a.previousVisits!.count > 0)).toBe(true)
   })
 })
 

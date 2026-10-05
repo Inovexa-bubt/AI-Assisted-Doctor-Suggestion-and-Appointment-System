@@ -84,20 +84,43 @@ function SettingsForm({ initial }: { initial: Settings }) {
       </Card>
       <Card className="space-y-4 p-5">
         <h2 className="font-semibold text-slate-900">{t('admin.settings.bookingTitle')}</h2>
-        <Field label={t('admin.settings.openDays')} className="max-w-xs">
-          {(id) => (
-            <Input
-              id={id}
-              type="number"
-              min={1}
-              max={60}
-              value={form.booking.openDays}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, booking: { openDays: Number(e.target.value) } }))
-              }
-            />
-          )}
-        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label={t('admin.settings.openDays')}>
+            {(id) => (
+              <Input
+                id={id}
+                type="number"
+                min={1}
+                max={60}
+                value={form.booking.openDays}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    booking: { ...f.booking, openDays: Number(e.target.value) },
+                  }))
+                }
+              />
+            )}
+          </Field>
+          <Field label={t('admin.settings.closeBefore')} hint={t('admin.settings.closeBeforeHint')}>
+            {(id) => (
+              <Input
+                id={id}
+                type="number"
+                min={0}
+                max={240}
+                step={15}
+                value={form.booking.closeMinutesBefore}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    booking: { ...f.booking, closeMinutesBefore: Number(e.target.value) },
+                  }))
+                }
+              />
+            )}
+          </Field>
+        </div>
       </Card>
       {save.error && <Alert tone="danger">{errorMessage(save.error)}</Alert>}
       {save.isSuccess && <Alert tone="success">{t('common.saved')}</Alert>}

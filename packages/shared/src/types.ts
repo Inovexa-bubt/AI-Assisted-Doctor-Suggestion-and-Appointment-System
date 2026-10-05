@@ -80,6 +80,8 @@ export interface AvailabilitySession {
   end: string
   room: string
   slots: Slot[]
+  /** Online booking has closed for this session; only the front desk can still book it. */
+  closed?: boolean
 }
 
 export interface AvailabilityDay {
@@ -143,6 +145,8 @@ export interface AppointmentView extends Appointment {
   room?: string
   /** For a held reschedule: the booking it will replace. */
   rescheduledFrom?: AppointmentView
+  /** On staff lists: earlier visits of this patient to this doctor. */
+  previousVisits?: { count: number; last: string | null }
 }
 
 export interface QueueStatus {
@@ -228,6 +232,8 @@ export interface Settings {
   booking: {
     /** How many days ahead patients can book. */
     openDays: number
+    /** Online booking for a session closes this many minutes before it starts. */
+    closeMinutesBefore: number
   }
 }
 
@@ -268,6 +274,8 @@ export type ErrorCode =
   | 'SLOT_TAKEN'
   | 'DOCTOR_ON_LEAVE'
   | 'SLOT_IN_PAST'
+  | 'BOOKING_CLOSED'
+  | 'ALREADY_BOOKED'
   | 'HOLD_EXPIRED'
   | 'OTP_INVALID'
   | 'OTP_EXPIRED'

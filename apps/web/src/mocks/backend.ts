@@ -29,6 +29,7 @@ import {
   type StaffUser,
   type TriageResult,
   type TriageSession,
+  DEFAULT_CLOSE_MINUTES_BEFORE,
   HOLD_MINUTES,
   addDays,
   availability,
@@ -71,6 +72,8 @@ const STATUS_FOR: Record<ErrorCode, number> = {
   SLOT_TAKEN: 409,
   DOCTOR_ON_LEAVE: 409,
   SLOT_IN_PAST: 409,
+  BOOKING_CLOSED: 409,
+  ALREADY_BOOKED: 409,
   HOLD_EXPIRED: 410,
   OTP_INVALID: 422,
   OTP_EXPIRED: 422,
@@ -81,6 +84,10 @@ const MESSAGES: Partial<Record<ErrorCode, string>> = {
   SLOT_TAKEN: 'Someone else just took this slot.',
   DOCTOR_ON_LEAVE: 'The doctor is on leave that day.',
   SLOT_IN_PAST: 'This slot has already started.',
+  BOOKING_CLOSED:
+    'Online booking for this session has closed. Please call or visit the front desk.',
+  ALREADY_BOOKED:
+    'You already have an upcoming appointment with this doctor. Reschedule it instead.',
   HOLD_EXPIRED: 'The 5-minute hold on this slot has expired.',
   NOT_FOUND: 'Not found.',
 }
@@ -130,6 +137,11 @@ export class MockBackend {
 
   private openDays() {
     return this.db.settings().booking.openDays
+  }
+
+  /** Minutes before a session that online booking closes (older saved settings lack it). */
+  private closeMinutes() {
+    return this.db.settings().booking.closeMinutesBefore ?? DEFAULT_CLOSE_MINUTES_BEFORE
   }
 
   private doctorOr404(id: string, activeOnly = true): Doctor {
@@ -249,7 +261,13 @@ export class MockBackend {
     return this.doctorOr404(id)
   }
 
-  private availabilityFor(doctor: Doctor, from: string, days = this.openDays()): AvailabilityDay[] {
+  /** Slots as patients see them online; `online = false` is the front desk's view. */
+  private availabilityFor(
+    doctor: Doctor,
+    from: string,
+    days = this.openDays(),
+    online = true,
+  ): AvailabilityDay[] {
     const today = this.today()
     const lastOpen = addDays(today, this.openDays() - 1)
     const result = availability({
@@ -259,6 +277,7 @@ export class MockBackend {
       leaveDates: this.leaveDates(doctor.id),
       appointments: this.appointmentsOf(doctor.id),
       now: this.now(),
+      ...(online ? { closeMinutesBefore: this.closeMinutes() } : {}),
     })
     // Slots beyond the booking window are shown but not bookable.
     for (const day of result) {
@@ -496,6 +515,21 @@ export class MockBackend {
       if (t && (!t.patientId || t.patientId === patient.id)) triageId = t.id
     }
 
+    // One upcoming booking per doctor: a second one is a reschedule (management's rule).
+    if (!rescheduleOf) {
+      const today = this.today()
+      const existing = this.db
+        .all('appointments')
+        .some(
+          (a) =>
+            a.patientId === patient.id &&
+            a.doctorId === doctor.id &&
+            ACTIVE.has(a.status) &&
+            a.date >= today,
+        )
+      if (existing) fail('ALREADY_BOOKED')
+    }
+
     // One hold per patient at a time.
     for (const a of mine) this.db.remove('appointments', a.id)
     this.clearExpiredHolds()
@@ -508,6 +542,7 @@ export class MockBackend {
       appointments: this.appointmentsOf(doctor.id, date),
       now,
       openDays: this.openDays(),
+      closeMinutesBefore: this.closeMinutes(),
     })
     if (!check.ok) return this.slotError(check.code)
 
@@ -814,21 +849,24 @@ export class MockBackend {
 
   getSettings(): Settings {
     const { reminder, booking } = this.db.settings()
-    return { reminder, booking }
+    return { reminder, booking: { ...booking, closeMinutesBefore: this.closeMinutes() } }
   }
 
   putSettings(body: Partial<Settings>): Settings {
     const daysBefore = Number(body.reminder?.daysBefore)
     const time = String(body.reminder?.time ?? '')
     const openDays = Number(body.booking?.openDays)
+    const closeMinutesBefore = Number(body.booking?.closeMinutesBefore ?? this.closeMinutes())
     if (daysBefore !== 0 && daysBefore !== 1)
       fail('VALIDATION', 'Reminders go the day before or on the day.')
     if (!isValidTime(time)) fail('VALIDATION', 'Enter the reminder time as HH:mm.')
     if (!Number.isInteger(openDays) || openDays < 1 || openDays > 60)
       fail('VALIDATION', 'Booking window must be 1–60 days.')
+    if (!Number.isInteger(closeMinutesBefore) || closeMinutesBefore < 0 || closeMinutesBefore > 240)
+      fail('VALIDATION', 'Online booking must close 0–240 minutes before a session.')
     const settings: Settings = {
       reminder: { daysBefore: daysBefore as 0 | 1, time },
-      booking: { openDays },
+      booking: { openDays, closeMinutesBefore },
     }
     this.db.put('settings', { ...settings, id: 'settings' })
     return settings
@@ -887,17 +925,28 @@ export class MockBackend {
   daySheet(doctorId: string, date: string): DaySheet {
     const doctor = this.doctorOr404(doctorId, false)
     if (!isValidDate(date)) fail('VALIDATION', 'Choose a date.')
-    const [day] = this.availabilityFor(doctor, date, 1)
+    const [day] = this.availabilityFor(doctor, date, 1, false)
     const appointments = this.appointmentsOf(doctor.id, date)
       .filter((a) => a.status !== 'held')
       .sort((a, b) => a.serial - b.serial)
+    // Earlier visits to this doctor, so staff can tell first visits from returning patients.
+    const seenBefore = this.appointmentsOf(doctor.id)
+      .filter((a) => a.status === 'seen' && a.date < date)
+      .sort((a, b) => a.date.localeCompare(b.date))
+    const previousVisits = (patientId: string) => {
+      const visits = seenBefore.filter((a) => a.patientId === patientId)
+      return { count: visits.length, last: visits.at(-1)?.date ?? null }
+    }
     return {
       doctorId: doctor.id,
       date,
       onLeave: day?.onLeave ?? false,
       sessions: day?.sessions ?? [],
       nowServing: appointments.find((a) => a.status === 'in_consultation')?.serial ?? null,
-      appointments: appointments.map((a) => this.view(a, true)),
+      appointments: appointments.map((a) => ({
+        ...this.view(a, true),
+        previousVisits: previousVisits(a.patientId),
+      })),
     }
   }
 
@@ -905,7 +954,8 @@ export class MockBackend {
     const a = this.db.get('appointments', id) ?? fail('NOT_FOUND', 'Appointment not found.')
     const status = body.status as AppointmentStatus
     const allowed: Record<string, AppointmentStatus[]> = {
-      arrived: ['booked'],
+      // A patient marked no-show who turns up late is checked in again.
+      arrived: ['booked', 'no_show'],
       seen: ['arrived', 'in_consultation'],
       no_show: ['booked', 'arrived'],
     }

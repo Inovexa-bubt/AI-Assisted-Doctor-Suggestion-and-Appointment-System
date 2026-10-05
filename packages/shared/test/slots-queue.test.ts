@@ -147,6 +147,28 @@ describe('availability', () => {
     })
     expect(day).toEqual({ date: '2026-10-05', onLeave: true, sessions: [] })
   })
+
+  it('closes online booking for sessions that start within the cut-off', () => {
+    // 16:10: the 17:00 session starts in 50 minutes.
+    const at = dhakaInstant('2026-10-04', '16:10')
+    const online = (closeMinutesBefore?: number) =>
+      availability({
+        doctor,
+        from: '2026-10-04',
+        days: 2,
+        leaveDates: [],
+        appointments: [],
+        now: at,
+        closeMinutesBefore,
+      })
+    const [today, tomorrow] = online(60)
+    expect(today!.sessions.find((s) => s.ruleId === 'r-eve')).toMatchObject({ closed: true })
+    expect(today!.sessions.flatMap((s) => s.slots).some((s) => s.available)).toBe(false)
+    expect(tomorrow!.sessions[0]!.closed).toBeUndefined()
+    // A 45-minute cut-off leaves it open; the front desk (no cut-off) always sees it open.
+    expect(online(45)[0]!.sessions.find((s) => s.ruleId === 'r-eve')!.closed).toBeUndefined()
+    expect(openSlots(online())[0]).toMatchObject({ date: '2026-10-04', start: '17:00' })
+  })
 })
 
 describe('checkSlot', () => {
@@ -170,6 +192,16 @@ describe('checkSlot', () => {
     ['2026-10-25', '17:00', 'VALIDATION'],
   ])('rejects %s %s with %s', (date, start, code) => {
     expect(checkSlot({ ...base, date, start })).toEqual({ ok: false, code })
+  })
+
+  it('rejects online booking after the cut-off but lets the front desk book', () => {
+    const at = dhakaInstant('2026-10-04', '16:10')
+    const slot = { ...base, now: at, date: '2026-10-04', start: '17:30' }
+    expect(checkSlot({ ...slot, closeMinutesBefore: 60 })).toEqual({
+      ok: false,
+      code: 'BOOKING_CLOSED',
+    })
+    expect(checkSlot(slot).ok).toBe(true)
   })
 
   it('rejects leave days and taken slots, but ignores the appointment being rescheduled', () => {

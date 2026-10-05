@@ -84,6 +84,22 @@ export interface AvailabilityInput {
   leaveDates: Iterable<string>
   appointments: Iterable<SlotBooking>
   now: Date
+  /**
+   * Online booking: a session closes this many minutes before it starts. Leave it out for the
+   * front desk, which can book any free slot that has not started.
+   */
+  closeMinutesBefore?: number
+}
+
+/** Whether online booking for a session that starts at `start` on `date` has closed. */
+export function sessionClosed(
+  date: string,
+  start: string,
+  now: Date,
+  closeMinutesBefore: number | undefined,
+): boolean {
+  if (closeMinutesBefore === undefined || date !== dhakaDate(now)) return false
+  return toMinutes(start) - dhakaMinutes(now) < closeMinutesBefore
 }
 
 /** Sessions and slots for each day in the range. Past slots and taken slots are unavailable. */
@@ -107,15 +123,24 @@ export function availability(input: AvailabilityInput): AvailabilityDay[] {
     const sessions: AvailabilitySession[] = []
     let offset = 0
     for (const rule of rulesOn(doctor, date)) {
+      const closed = sessionClosed(date, rule.start, now, input.closeMinutesBefore)
       const slots: Slot[] = sessionSlots(rule, offset).map((s) => ({
         date,
         ...s,
         available:
+          !closed &&
           !taken.has(`${date} ${s.start}`) &&
           (date > today || (date === today && toMinutes(s.start) > nowMin)),
       }))
       offset += slots.length
-      sessions.push({ ruleId: rule.id, start: rule.start, end: rule.end, room: rule.room, slots })
+      sessions.push({
+        ruleId: rule.id,
+        start: rule.start,
+        end: rule.end,
+        room: rule.room,
+        slots,
+        ...(closed ? { closed } : {}),
+      })
     }
     result.push({ date, onLeave: false, sessions })
   }
@@ -137,6 +162,8 @@ export interface SlotCheckInput {
   openDays: number
   /** An appointment to ignore when checking whether the slot is taken (e.g. the one being rescheduled). */
   ignoreId?: string
+  /** Online booking only: see `AvailabilityInput.closeMinutesBefore`. */
+  closeMinutesBefore?: number
 }
 
 export type SlotCheck = { ok: true; slot: DaySlot } | { ok: false; code: ErrorCode }
@@ -151,6 +178,9 @@ export function checkSlot(input: SlotCheckInput): SlotCheck {
   const today = dhakaDate(now)
   if (date < today || (date === today && toMinutes(start) <= dhakaMinutes(now))) {
     return { ok: false, code: 'SLOT_IN_PAST' }
+  }
+  if (sessionClosed(date, slot.rule.start, now, input.closeMinutesBefore)) {
+    return { ok: false, code: 'BOOKING_CLOSED' }
   }
   if (daysBetween(today, date) >= input.openDays) return { ok: false, code: 'VALIDATION' }
   for (const a of input.appointments) {

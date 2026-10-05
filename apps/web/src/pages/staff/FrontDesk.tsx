@@ -107,6 +107,8 @@ export default function FrontDesk() {
         </>
       )
     if (a.status === 'in_consultation') return mark('seen', t('frontDesk.seen'), 'secondary')
+    if (a.status === 'no_show' && a.date === dhakaDate())
+      return mark('arrived', t('frontDesk.arrivedLate'), 'secondary')
     return null
   }
 

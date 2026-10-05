@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { api } from '../api/endpoints.ts'
+import { errorCode } from '../lib/errors.ts'
 import { Alert, ButtonLink, Spinner, useErrorMessage } from '../components/ui.tsx'
 import { useI18n } from '../i18n/index.ts'
 
@@ -39,9 +40,15 @@ export default function Book() {
           tone="warning"
           title={errorMessage(hold.error)}
           action={
-            <ButtonLink to={`/doctors/${doctorId}${back.size ? `?${back}` : ''}`} replace>
-              {t('booking.chooseAnother')}
-            </ButtonLink>
+            errorCode(hold.error) === 'ALREADY_BOOKED' ? (
+              <ButtonLink to="/appointments" replace>
+                {t('booking.myAppointments')}
+              </ButtonLink>
+            ) : (
+              <ButtonLink to={`/doctors/${doctorId}${back.size ? `?${back}` : ''}`} replace>
+                {t('booking.chooseAnother')}
+              </ButtonLink>
+            )
           }
         />
       </div>

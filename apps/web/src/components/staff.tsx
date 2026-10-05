@@ -81,6 +81,19 @@ export function PatientRow({
               {formatPhone(p.phone)}
             </a>
           )}
+          {a.previousVisits && (
+            <p className="text-sm text-slate-500">
+              {a.previousVisits.count === 0
+                ? t('frontDesk.firstVisit')
+                : t('frontDesk.previousVisits', {
+                    count: a.previousVisits.count,
+                    n: formatNumber(a.previousVisits.count, lang),
+                    date: a.previousVisits.last
+                      ? formatDate(a.previousVisits.last, lang, 'short')
+                      : '',
+                  })}
+            </p>
+          )}
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <StatusBadge status={a.status} />
             <Badge>{t(`source.${a.source}`)}</Badge>

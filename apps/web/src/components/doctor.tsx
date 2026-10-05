@@ -133,6 +133,7 @@ export function SlotPicker({
             0,
           )
           const hasChamber = d.sessions.length > 0
+          const closed = d.sessions.some((s) => s.closed)
           const active = d.date === date
           return (
             <button
@@ -165,7 +166,9 @@ export function SlotPicker({
                     ? t('doctor.noChamber')
                     : free
                       ? t('doctor.free', { count: free, n: formatNumber(free, lang) })
-                      : t('doctor.full')}
+                      : closed
+                        ? t('doctor.closed')
+                        : t('doctor.full')}
               </span>
             </button>
           )
@@ -186,7 +189,9 @@ export function SlotPicker({
                   {formatTime(session.start, lang)} – {formatTime(session.end, lang)} ·{' '}
                   {session.room}
                 </p>
-                {session.slots.some((s) => s.available) ? (
+                {session.closed ? (
+                  <p className="text-sm text-slate-600">{t('doctor.sessionClosed')}</p>
+                ) : session.slots.some((s) => s.available) ? (
                   <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-6">
                     {session.slots.map((slot) => {
                       const isSelected =
