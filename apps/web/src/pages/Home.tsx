@@ -103,13 +103,16 @@ export default function Home() {
             <li key={s.id}>
               <Link
                 to={`/doctors?specialty=${s.id}`}
-                className="flex h-full gap-3 rounded-xl bg-white p-3 ring-1 ring-slate-200 transition hover:ring-brand-300 hover:shadow-sm sm:p-4"
+                className="flex h-full flex-col gap-2 rounded-xl bg-white p-3 ring-1 ring-slate-200 transition hover:ring-brand-300 hover:shadow-sm sm:flex-row sm:gap-3 sm:p-4"
               >
                 <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
                   <SpecialtyIcon id={s.id} className="size-5" />
                 </span>
                 <span className="min-w-0">
-                  <span className="block font-medium text-slate-900">{pick(s.name, lang)}</span>
+                  {/* Long names ("Gastroenterology") must not push the page wider than a phone. */}
+                  <span className="block font-medium text-slate-900 hyphens-auto wrap-break-word">
+                    {pick(s.name, lang)}
+                  </span>
                   <span className="mt-0.5 line-clamp-2 hidden text-sm text-slate-500 sm:block">
                     {pick(s.description, lang)}
                   </span>
