@@ -1,64 +1,33 @@
+import type { Lang } from '@inovexa/shared'
+import { Router } from 'express'
+import multer from 'multer'
+import { fail } from '../errors.ts'
+import type { SttProvider } from '../providers/stt.ts'
 
-import { Router } from "express";
-import multer from "multer";
+export function createSpeechRoutes(stt: SttProvider) {
+  const router = Router()
 
-const router = Router();
+  // Audio is kept in memory only and immediately discarded after transcription (SOW privacy term).
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 },
+  })
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 10 * 1024 * 1024
-  },
-  fileFilter: (_req, file, callback) => {
-    const allowedTypes = [
-      "audio/mpeg",
-      "audio/mp3",
-      "audio/wav",
-      "audio/webm",
-      "audio/ogg",
-      "audio/mp4",
-      "audio/x-m4a"
-    ];
-
-    if (allowedTypes.includes(file.mimetype)) {
-      callback(null, true);
-    } else {
-      callback(new Error("Unsupported audio format."));
+  // POST /api/v1/speech/transcribe
+  router.post('/transcribe', upload.single('audio'), async (req, res) => {
+    const lang: Lang = req.body?.lang === 'bn' ? 'bn' : 'en'
+    const file = req.file
+    if (!file && stt.name !== 'mock') {
+      fail('VALIDATION', 'Audio recording is required.')
     }
-  }
-});
+    const result = await stt.transcribe({
+      buffer: file?.buffer ?? Buffer.alloc(0),
+      mimeType: file?.mimetype ?? 'audio/webm',
+      filename: file?.originalname ?? 'speech.webm',
+      lang,
+    })
+    res.json(result)
+  })
 
-// POST /api/v1/speech/transcribe
-router.post("/transcribe", upload.single("audio"), (req, res) => {
-  const file = req.file;
-  const lang = req.body.lang;
-
-  if (!file) {
-    return res.status(400).json({
-      error: {
-        code: "VALIDATION",
-        message: "An audio file is required."
-      }
-    });
-  }
-
-  if (lang !== "en" && lang !== "bn") {
-    return res.status(400).json({
-      error: {
-        code: "VALIDATION",
-        message: "Language must be en or bn."
-      }
-    });
-  }
-
-  // Audio is held in memory only and is not saved.
-  // A transcription provider will be connected later.
-  return res.status(501).json({
-    error: {
-      code: "TRANSCRIPTION_NOT_CONFIGURED",
-      message: "Speech transcription provider is not configured yet."
-    }
-  });
-});
-
-export default router;
+  return router
+}

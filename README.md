@@ -20,25 +20,68 @@ booking analytics.
 
 ## Repository layout
 
-| Path              | What it is                                                                    |
-| ----------------- | ----------------------------------------------------------------------------- |
-| `apps/web`        | React frontend (Vite, TypeScript, Tailwind CSS)                               |
-| `packages/shared` | Types, domain rules and the sample-data generator, shared with the future API |
-| `docs/design`     | System design: architecture, data model, API contract, UML, screens           |
+| Path              | What it is                                                                      |
+| ----------------- | ------------------------------------------------------------------------------- |
+| `apps/web`        | React frontend (Vite, TypeScript, Tailwind CSS, Socket.IO client)               |
+| `apps/api`        | Express backend (PostgreSQL 16+ / PGlite, Socket.IO, scheduler, AI/STT/SMS)     |
+| `packages/shared` | Types, domain rules, 120-case AI test set, and the sample-data generator        |
+| `docs/design`     | System design: architecture, data model, API contract, UML, screens, wireframes |
 
 ## Running it
 
 Requires Node.js 22 or later.
 
+### Frontend demo (in-browser mock API)
+
 ```bash
 npm install
-npm run dev          # http://localhost:5173
+npm run dev          # http://localhost:5173 (uses MSW mock API by default)
 ```
 
-Until the backend exists, the frontend talks to a mock API that runs in the browser
-([Mock Service Worker](https://mswjs.io/)) over sample data generated for today. The requests and
-responses follow [`docs/design/api.md`](docs/design/api.md), so the same screens will work against
-the real backend.
+### Full stack (frontend + real backend API)
+
+```bash
+# Terminal 1 — start the API (uses PostgreSQL via DATABASE_URL, or embedded PGlite by default)
+cp apps/api/.env.example apps/api/.env
+npm run dev:api      # http://localhost:4000
+
+# Terminal 2 — start the frontend pointed at the real API (Vite proxies /api and /socket.io)
+VITE_API_MOCK=false npm run dev
+```
+
+To import the standalone PostgreSQL 16+ SQL dump into a PostgreSQL database:
+
+```bash
+psql -d lumina_hospital -f lumina_hospital_seed.sql
+```
+
+Or seed dynamically via Node (uses `@inovexa/shared`'s 3-month sample-data generator):
+
+```bash
+npm run db:migrate
+npm run db:seed
+```
+
+To run the 120-case AI specialty & emergency evaluation benchmark:
+
+```bash
+npm run eval:ai
+```
+
+### Deploying
+
+- **Docker Compose (PostgreSQL 16 + full stack):**
+
+  ```bash
+  docker compose up --build -d
+  ```
+
+- **Single-service PaaS (Render / Railway / Fly.io):** build using the root `Dockerfile` (builds `apps/web` with `VITE_API_MOCK=false`, builds `apps/api`, and serves both on `$PORT` with `SERVE_STATIC=true`).
+- **Linux VPS with Nginx:** build with `VITE_API_MOCK=false npm run build`, run `node apps/api/dist/server.js` under systemd/PM2, and use [`deploy/nginx.conf`](deploy/nginx.conf).
+
+In frontend-only demo mode (`npm run dev` with `VITE_API_MOCK=true`), the frontend talks to an
+in-browser mock API ([Mock Service Worker](https://mswjs.io/)) over sample data generated for today.
+With `VITE_API_MOCK=false`, the same screens talk to `apps/api` over `/api/v1` and `/socket.io`.
 
 ### Using the demo
 

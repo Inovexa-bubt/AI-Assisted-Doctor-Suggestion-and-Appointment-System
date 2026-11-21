@@ -1,141 +1,32 @@
-
-import { Router } from "express";
-
+import { Router } from 'express'
 import {
-  authenticateStaff,
-  createStaffSession,
-  destroyStaffSession,
-  getStaffBySession,
-  publicStaff
-} from "../services/staff-auth.service.js";
+  type AuthMiddleware,
+  type AuthedRequest,
+  STAFF_COOKIE,
+} from '../middleware/staff-auth.middleware.ts'
+import type { HospitalService } from '../services/hospital.ts'
 
-import {
-  requireStaff,
-  StaffRequest
-} from "../middleware/staff-auth.middleware.js";
+export function createStaffRoutes(service: HospitalService, auth: AuthMiddleware) {
+  const router = Router()
 
-const router = Router();
+  // POST /api/v1/staff/login
+  router.post('/login', async (req, res) => {
+    const { sessionId, user } = await service.staffLogin(req.body ?? {}, req.ip)
+    res.cookie(STAFF_COOKIE, sessionId, auth.cookieOpts(12 * 60 * 60_000))
+    res.json(user)
+  })
 
-// 1. Staff login
-router.post("/login", (req, res) => {
-  const { username, password } = req.body;
+  // GET /api/v1/staff/me
+  router.get('/me', auth.requireStaff(), (req: AuthedRequest, res) => {
+    res.json(req.staff)
+  })
 
-  if (
-    typeof username !== "string" ||
-    typeof password !== "string" ||
-    !username.trim() ||
-    !password
-  ) {
-    return res.status(400).json({
-      error: {
-        code: "VALIDATION",
-        message: "Username and password are required."
-      }
-    });
-  }
+  // POST /api/v1/staff/logout
+  router.post('/logout', async (req, res) => {
+    await service.logout(auth.staffSid(req))
+    res.clearCookie(STAFF_COOKIE, auth.clearCookieOpts)
+    res.status(204).end()
+  })
 
-  const staff = authenticateStaff(username.trim(), password);
-
-  if (!staff) {
-    return res.status(401).json({
-      error: {
-        code: "UNAUTHENTICATED",
-        message: "Invalid username or password."
-      }
-    });
-  }
-
-  const sessionId = createStaffSession(staff.id);
-
-  res.cookie("staff_sid", sessionId, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/"
-  });
-
-  return res.status(200).json(publicStaff(staff));
-});
-
-// 2. Get logged-in staff profile
-router.get("/me", (req, res) => {
-  const sessionId = req.cookies?.staff_sid;
-
-  if (!sessionId) {
-    return res.status(401).json({
-      error: {
-        code: "UNAUTHENTICATED",
-        message: "Staff login required."
-      }
-    });
-  }
-
-  const staff = getStaffBySession(sessionId);
-
-  if (!staff) {
-    return res.status(401).json({
-      error: {
-        code: "UNAUTHENTICATED",
-        message: "Invalid staff session."
-      }
-    });
-  }
-
-  return res.status(200).json(publicStaff(staff));
-});
-
-// 3. Staff logout
-router.post("/logout", (req, res) => {
-  const sessionId = req.cookies?.staff_sid;
-
-  if (sessionId) {
-    destroyStaffSession(sessionId);
-  }
-
-  res.clearCookie("staff_sid", {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/"
-  });
-
-  return res.status(204).send();
-});
-
-// 4. Admin-only protected endpoint
-router.get(
-  "/admin-test",
-  requireStaff(["admin"]),
-  (req: StaffRequest, res) => {
-    return res.status(200).json({
-      message: "Admin access granted.",
-      staff: req.staff
-    });
-  }
-);
-
-// 5. Front Desk-only protected endpoint
-router.get(
-  "/frontdesk-test",
-  requireStaff(["front_desk"]),
-  (req: StaffRequest, res) => {
-    return res.status(200).json({
-      message: "Front Desk access granted.",
-      staff: req.staff
-    });
-  }
-);
-
-// 6. Doctor-only protected endpoint
-router.get(
-  "/doctor-test",
-  requireStaff(["doctor"]),
-  (req: StaffRequest, res) => {
-    return res.status(200).json({
-      message: "Doctor access granted.",
-      staff: req.staff
-    });
-  }
-);
-
-export default router;
+  return router
+}

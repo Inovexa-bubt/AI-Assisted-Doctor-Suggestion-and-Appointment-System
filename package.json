@@ -8,6 +8,11 @@
   ],
   "scripts": {
     "dev": "npm run dev -w @inovexa/web",
+    "dev:api": "npm run dev -w @inovexa/api",
+    "db:migrate": "npm run db:migrate -w @inovexa/api",
+    "db:seed": "npm run db:seed -w @inovexa/api",
+    "eval:ai": "npm run eval:ai -w @inovexa/api",
+    "e2e:fullstack": "node apps/api/src/scripts/e2e-fullstack.mjs",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",

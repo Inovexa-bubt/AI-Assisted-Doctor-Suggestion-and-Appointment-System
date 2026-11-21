@@ -1,132 +1,60 @@
+import { createServer } from 'node:http'
+import { createApp } from './app.ts'
+import { loadConfig } from './config.ts'
+import { createDb } from './db/client.ts'
+import { runMigrations } from './db/migrate.ts'
+import { seedDatabase } from './db/seed.ts'
+import { createAiProvider } from './providers/ai.ts'
+import { createSmsProvider } from './providers/sms.ts'
+import { createSttProvider } from './providers/stt.ts'
+import { createQueueHub } from './realtime.ts'
+import { startScheduler } from './scheduler.ts'
+import { HospitalService } from './services/hospital.ts'
 
-import "dotenv/config";
-import express from "express";
-import cors from "cors";
-import helmet from "helmet";
-import cookieParser from "cookie-parser";
-import { createServer } from "http";
-import { Server } from "socket.io";
+async function main() {
+  const config = loadConfig()
+  const db = await createDb(config.databaseUrl)
+  await runMigrations(db)
 
-import specialtyRoutes from "./routes/specialty.routes.js";
-import doctorRoutes from "./routes/doctor.routes.js";
-import triageRoutes from "./routes/triage.routes.js";
-import appointmentRoutes from "./routes/appointment.routes.js";
-import authRoutes from "./routes/auth.routes.js";
-import staffRoutes from "./routes/staff.routes.js";
-import adminDoctorRoutes from "./routes/admin-doctor.routes.js";
-import adminScheduleRoutes from "./routes/admin-schedule.routes.js";
-import adminLeaveRoutes from "./routes/admin-leave.routes.js";
-import adminSettingRoutes from "./routes/admin-setting.routes.js";
-import frontdeskRoutes from "./routes/frontdesk.routes.js";
-import frontdeskPatientRoutes from "./routes/frontdesk-patient.routes.js";
-import doctorDashboardRoutes from "./routes/doctor-dashboard.routes.js";
-import queueRoutes from "./routes/queue.routes.js";
-import analyticsRoutes from "./routes/analytics.routes.js";
-import speechRoutes from "./routes/speech.routes.js";
-
-const app = express();
-const httpServer = createServer(app);
-
-const PORT = Number(process.env.PORT) || 4000;
-
-const allowedOrigin =
-  process.env.FRONTEND_URL || "http://localhost:5173";
-
-app.use(helmet());
-
-app.use(
-  cors({
-    origin: allowedOrigin,
-    credentials: true
-  })
-);
-
-app.use(express.json());
-app.use(cookieParser());
-
-// Socket.IO configuration
-const io = new Server(httpServer, {
-  cors: {
-    origin: allowedOrigin,
-    credentials: true
+  // Auto-seed an empty local database so first run works out of the box.
+  if (config.nodeEnv !== 'production') {
+    const { seeded } = await seedDatabase(db, { onlyIfEmpty: true })
+    if (seeded) console.log('[api] database was empty — seeded with sample data.')
   }
-});
 
-// Socket connection
-io.on("connection", socket => {
-  console.log(`Socket connected: ${socket.id}`);
+  const ai = createAiProvider(config)
+  const stt = createSttProvider(config)
+  const sms = createSmsProvider(config)
 
-  // Join a doctor's queue room
-  socket.on("queue:join", (data: { doctorId?: string; date?: string }) => {
-    if (
-      typeof data?.doctorId !== "string" ||
-      typeof data?.date !== "string" ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(data.date)
-    ) {
-      return;
-    }
+  const queue = createQueueHub()
+  const service = new HospitalService({
+    db,
+    ai,
+    sms,
+    queue,
+    exposeDemoOtp: sms.isSandbox && config.nodeEnv !== 'production',
+  })
+  const app = createApp({ service, stt, config })
+  const httpServer = createServer(app)
+  queue.attach?.(httpServer, config.corsOrigin)
 
-    const room = `queue:${data.doctorId}:${data.date}`;
+  const scheduler = config.enableScheduler ? startScheduler(service) : null
 
-    socket.join(room);
+  httpServer.listen(config.port, () => {
+    console.log(
+      `[api] Lumina Hospital API running at http://localhost:${config.port} (db=${db.driver}, ai=${ai.name}, stt=${stt.name}, sms=${sms.name})`,
+    )
+  })
 
-    socket.emit("queue:joined", {
-      message: "Successfully joined queue updates.",
-      doctorId: data.doctorId,
-      date: data.date
-    });
-  });
+  const shutdown = async () => {
+    scheduler?.stop()
+    await queue.close()
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()))
+    await db.close()
+    process.exit(0)
+  }
+  process.on('SIGINT', () => void shutdown())
+  process.on('SIGTERM', () => void shutdown())
+}
 
-  socket.on("disconnect", () => {
-    console.log(`Socket disconnected: ${socket.id}`);
-  });
-});
-
-// Make Socket.IO available to route handlers
-app.set("io", io);
-
-// Health check
-app.get("/api/v1/health", (_req, res) => {
-  res.status(200).json({
-    success: true,
-    message: "Innovexa API is running",
-    timestamp: new Date().toISOString()
-  });
-});
-
-// API routes
-app.use("/api/v1/admin/doctors", adminDoctorRoutes);
-app.use("/api/v1/admin/schedules", adminScheduleRoutes);
-app.use("/api/v1/admin/leave-days", adminLeaveRoutes);
-app.use("/api/v1/admin/settings", adminSettingRoutes);
-app.use("/api/v1/admin/analytics", analyticsRoutes);
-
-app.use("/api/v1/frontdesk", frontdeskRoutes);
-app.use("/api/v1/frontdesk", frontdeskPatientRoutes);
-app.use("/api/v1/doctor", doctorDashboardRoutes);
-
-app.use("/api/v1/queue", queueRoutes);
-app.use("/api/v1/speech", speechRoutes);
-
-app.use("/api/v1/specialties", specialtyRoutes);
-app.use("/api/v1/doctors", doctorRoutes);
-app.use("/api/v1/triage", triageRoutes);
-app.use("/api/v1/appointments", appointmentRoutes);
-app.use("/api/v1/auth", authRoutes);
-app.use("/api/v1/staff", staffRoutes);
-
-// 404 handler
-app.use((_req, res) => {
-  res.status(404).json({
-    error: {
-      code: "NOT_FOUND",
-      message: "The requested endpoint was not found."
-    }
-  });
-});
-
-// Start server
-httpServer.listen(PORT, () => {
-  console.log(`Innovexa API running at http://localhost:${PORT}`);
-  console.log(`Socket.IO running on port ${PORT}`);
-});
+void main()

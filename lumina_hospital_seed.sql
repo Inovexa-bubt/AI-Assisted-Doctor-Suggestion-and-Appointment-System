@@ -1,871 +1,805 @@
---
--- PostgreSQL database dump
---
+-- Lumina Specialized Hospital — PostgreSQL 16+ Schema & Seed
+-- Generated from apps/api/db/migrations/001_init.sql and @inovexa/shared generateSampleData()
+-- Demo staff credentials: admin/admin123, frontdesk/frontdesk123, dr.<first>/doctor123
 
-\restrict bckeI0wDJ0fvEcEcSns7fmdkOfCoBmLqhoR9DL4xbrKkVSi72foKZdf1jA2PUTx
+BEGIN;
 
--- Dumped from database version 18.7
--- Dumped by pg_dump version 18.7
+-- Lumina Specialized Hospital — Initial PostgreSQL 16+ schema
+-- Implements docs/design/data-model.md including partial unique slot locking.
 
--- Started on 2026-11-21 20:49:59
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-SET statement_timeout = 0;
-SET lock_timeout = 0;
-SET idle_in_transaction_session_timeout = 0;
-SET transaction_timeout = 0;
-SET client_encoding = 'UTF8';
-SET standard_conforming_strings = on;
-SELECT pg_catalog.set_config('search_path', '', false);
-SET check_function_bodies = false;
-SET xmloption = content;
-SET client_min_messages = warning;
-SET row_security = off;
-
-SET default_tablespace = '';
-
-SET default_table_access_method = heap;
-
---
--- TOC entry 226 (class 1259 OID 16506)
--- Name: appointment; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.appointment (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    patient_id uuid NOT NULL,
-    doctor_id uuid NOT NULL,
-    date date NOT NULL,
-    start_time time without time zone NOT NULL,
-    end_time time without time zone NOT NULL,
-    serial smallint,
-    status text NOT NULL,
-    source text,
-    hold_expires_at timestamp with time zone,
-    triage_id uuid,
-    rescheduled_from_id uuid,
-    cancel_reason text,
-    called_at timestamp with time zone
+CREATE TABLE IF NOT EXISTS specialty (
+  id text PRIMARY KEY,
+  name_en text NOT NULL,
+  name_bn text NOT NULL,
+  description_en text NOT NULL DEFAULT '',
+  description_bn text NOT NULL DEFAULT '',
+  sort_order smallint NOT NULL DEFAULT 0,
+  active boolean NOT NULL DEFAULT true
 );
 
-
-ALTER TABLE public.appointment OWNER TO postgres;
-
---
--- TOC entry 220 (class 1259 OID 16400)
--- Name: doctor; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.doctor (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    name_en text NOT NULL,
-    name_bn text,
-    specialty_id text,
-    designation_en text,
-    designation_bn text,
-    qualifications text,
-    experience_years smallint,
-    fee integer,
-    gender text,
-    active boolean DEFAULT true
+CREATE TABLE IF NOT EXISTS doctor (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name_en text NOT NULL,
+  name_bn text NOT NULL,
+  specialty_id text NOT NULL REFERENCES specialty(id),
+  designation_en text NOT NULL DEFAULT '',
+  designation_bn text NOT NULL DEFAULT '',
+  qualifications text NOT NULL DEFAULT '',
+  experience_years smallint NOT NULL DEFAULT 0,
+  fee integer NOT NULL DEFAULT 0,
+  gender text NOT NULL DEFAULT 'male',
+  active boolean NOT NULL DEFAULT true
 );
 
-
-ALTER TABLE public.doctor OWNER TO postgres;
-
---
--- TOC entry 222 (class 1259 OID 16435)
--- Name: leave_day; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.leave_day (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    doctor_id uuid NOT NULL,
-    date date NOT NULL,
-    reason text
+CREATE TABLE IF NOT EXISTS schedule_rule (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  doctor_id uuid NOT NULL REFERENCES doctor(id) ON DELETE CASCADE,
+  weekday smallint NOT NULL CHECK (weekday BETWEEN 0 AND 6),
+  start_time time without time zone NOT NULL,
+  end_time time without time zone NOT NULL,
+  slot_minutes smallint NOT NULL,
+  max_patients smallint NOT NULL,
+  room text NOT NULL DEFAULT ''
 );
 
-
-ALTER TABLE public.leave_day OWNER TO postgres;
-
---
--- TOC entry 229 (class 1259 OID 16575)
--- Name: otp_code; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.otp_code (
-    phone text NOT NULL,
-    code_hash text NOT NULL,
-    expiry timestamp with time zone NOT NULL,
-    attempts integer DEFAULT 0
+CREATE TABLE IF NOT EXISTS leave_day (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  doctor_id uuid NOT NULL REFERENCES doctor(id) ON DELETE CASCADE,
+  date date NOT NULL,
+  reason text NOT NULL DEFAULT '',
+  UNIQUE (doctor_id, date)
 );
 
-
-ALTER TABLE public.otp_code OWNER TO postgres;
-
---
--- TOC entry 223 (class 1259 OID 16453)
--- Name: patient; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.patient (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    name text NOT NULL,
-    phone text NOT NULL,
-    age smallint,
-    sex text,
-    registered_by text,
-    phone_verified_at timestamp with time zone
+CREATE TABLE IF NOT EXISTS patient (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  phone text NOT NULL UNIQUE,
+  age smallint NOT NULL,
+  sex text NOT NULL,
+  registered_by text NOT NULL DEFAULT 'self',
+  phone_verified_at timestamptz
 );
 
-
-ALTER TABLE public.patient OWNER TO postgres;
-
---
--- TOC entry 227 (class 1259 OID 16542)
--- Name: queue_state; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.queue_state (
-    doctor_id uuid NOT NULL,
-    date date NOT NULL,
-    now_serving_id uuid,
-    updated_at timestamp with time zone DEFAULT now()
+CREATE TABLE IF NOT EXISTS triage_session (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id uuid REFERENCES patient(id),
+  lang text NOT NULL DEFAULT 'en',
+  problem text NOT NULL,
+  answers jsonb NOT NULL DEFAULT '[]'::jsonb,
+  status text NOT NULL,
+  pending_question text,
+  pending_quick_replies jsonb,
+  pending_kind text,
+  specialty_id text REFERENCES specialty(id),
+  urgency text,
+  explanation text,
+  tags text[] NOT NULL DEFAULT '{}'::text[],
+  emergency_matches text[],
+  summary jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
-
-ALTER TABLE public.queue_state OWNER TO postgres;
-
---
--- TOC entry 221 (class 1259 OID 16416)
--- Name: schedule_rule; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.schedule_rule (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    doctor_id uuid NOT NULL,
-    weekday smallint NOT NULL,
-    start_time time without time zone NOT NULL,
-    end_time time without time zone NOT NULL,
-    slot_minutes smallint NOT NULL,
-    max_patients smallint,
-    room text
+CREATE TABLE IF NOT EXISTS appointment (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id uuid NOT NULL REFERENCES patient(id),
+  doctor_id uuid NOT NULL REFERENCES doctor(id),
+  date date NOT NULL,
+  start_time time without time zone NOT NULL,
+  end_time time without time zone NOT NULL,
+  serial smallint NOT NULL,
+  status text NOT NULL,
+  source text NOT NULL DEFAULT 'online',
+  hold_expires_at timestamptz,
+  triage_id uuid REFERENCES triage_session(id),
+  rescheduled_from_id uuid REFERENCES appointment(id),
+  cancel_reason text,
+  called_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
-
-ALTER TABLE public.schedule_rule OWNER TO postgres;
-
---
--- TOC entry 230 (class 1259 OID 16586)
--- Name: setting; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.setting (
-    key text NOT NULL,
-    value jsonb
+CREATE TABLE IF NOT EXISTS queue_state (
+  doctor_id uuid NOT NULL REFERENCES doctor(id),
+  date date NOT NULL,
+  now_serving_id uuid REFERENCES appointment(id),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (doctor_id, date)
 );
 
-
-ALTER TABLE public.setting OWNER TO postgres;
-
---
--- TOC entry 228 (class 1259 OID 16560)
--- Name: sms_message; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.sms_message (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    phone text NOT NULL,
-    kind text,
-    body text,
-    appointment_id uuid,
-    status text,
-    sent_at timestamp with time zone
+CREATE TABLE IF NOT EXISTS staff_user (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  username text NOT NULL UNIQUE,
+  password_hash text NOT NULL,
+  role text NOT NULL,
+  doctor_id uuid REFERENCES doctor(id),
+  active boolean NOT NULL DEFAULT true
 );
 
-
-ALTER TABLE public.sms_message OWNER TO postgres;
-
---
--- TOC entry 219 (class 1259 OID 16389)
--- Name: specialty; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.specialty (
-    id text NOT NULL,
-    name_en text NOT NULL,
-    name_bn text,
-    description_en text,
-    description_bn text,
-    sort_order smallint DEFAULT 0,
-    active boolean DEFAULT true
+CREATE TABLE IF NOT EXISTS sms_message (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  phone text NOT NULL,
+  kind text NOT NULL,
+  body text NOT NULL,
+  appointment_id uuid REFERENCES appointment(id),
+  status text NOT NULL DEFAULT 'sent',
+  sent_at timestamptz NOT NULL DEFAULT now()
 );
 
-
-ALTER TABLE public.specialty OWNER TO postgres;
-
---
--- TOC entry 225 (class 1259 OID 16485)
--- Name: staff_user; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.staff_user (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    name text NOT NULL,
-    username text NOT NULL,
-    password_hash text NOT NULL,
-    role text NOT NULL,
-    doctor_id uuid,
-    active boolean DEFAULT true
+CREATE TABLE IF NOT EXISTS otp_code (
+  phone text PRIMARY KEY,
+  code_hash text NOT NULL,
+  expiry timestamptz NOT NULL,
+  attempts integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
-
-ALTER TABLE public.staff_user OWNER TO postgres;
-
---
--- TOC entry 224 (class 1259 OID 16466)
--- Name: triage_session; Type: TABLE; Schema: public; Owner: postgres
---
-
-CREATE TABLE public.triage_session (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    patient_id uuid,
-    lang text,
-    problem text,
-    answers jsonb,
-    status text,
-    specialty_id text,
-    urgency text,
-    explanation text,
-    tags text[],
-    summary jsonb,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+CREATE TABLE IF NOT EXISTS setting (
+  key text PRIMARY KEY,
+  value jsonb NOT NULL
 );
 
-
-ALTER TABLE public.triage_session OWNER TO postgres;
-
---
--- TOC entry 5112 (class 0 OID 16506)
--- Dependencies: 226
--- Data for Name: appointment; Type: TABLE DATA; Schema: public; Owner: postgres
---
-
-COPY public.appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at) FROM stdin;
-21c84e1b-33ea-335b-40e5-724c1c2e0a86	6c1ac21a-2cf6-cd0b-f241-35136965443f	f0e1afe2-a689-4576-64d4-e230206f7535	2026-11-21	17:30:00	17:42:00	1	seen	online	\N	02fd0613-d32d-3c29-b574-5ed3a0c06faa	\N	\N	\N
-7644f087-1c4e-1896-e4f6-8fcde82ea61f	53478790-910a-d1b1-dcd0-fdb3db42bd46	f0e1afe2-a689-4576-64d4-e230206f7535	2026-11-21	17:42:00	17:54:00	2	in_consultation	online	\N	\N	\N	\N	\N
-7911ef73-f4c8-5db0-b1a2-77ca68e47178	e8ccd103-6a3e-ee80-165e-7394fcce9fef	f0e1afe2-a689-4576-64d4-e230206f7535	2026-11-21	17:54:00	18:06:00	3	arrived	walk_in	\N	\N	\N	\N	\N
-c77984fd-1c23-fe8d-fe13-958d9b5943a0	c9e9a3fb-783b-3fd9-79ca-b87ff6239aef	f0e1afe2-a689-4576-64d4-e230206f7535	2026-11-21	18:06:00	18:18:00	4	booked	phone	\N	\N	\N	\N	\N
-c8fa224d-5e1f-092a-196e-fab3e93e38d1	53478790-910a-d1b1-dcd0-fdb3db42bd46	c2e6ca8c-1849-b126-862c-ffeac3389f81	2026-11-23	18:00:00	18:15:00	1	booked	online	\N	bac9e1da-09f9-0f01-a3e1-9e1fbd9f3ff9	\N	\N	\N
-754c6c88-409d-7592-e0c6-99b88e777473	eefeeca2-c074-0193-082f-586d861c3577	3243093c-d76e-5e4a-91ab-3f719f0f5f62	2026-11-16	17:00:00	17:12:00	1	seen	online	\N	\N	\N	\N	\N
-\.
-
-
---
--- TOC entry 5106 (class 0 OID 16400)
--- Dependencies: 220
--- Data for Name: doctor; Type: TABLE DATA; Schema: public; Owner: postgres
---
-
-COPY public.doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) FROM stdin;
-3243093c-d76e-5e4a-91ab-3f719f0f5f62	Dr. Mahmudul Hasan	ডা. মাহমুদুল হাসান	medicine	Senior Consultant	সিনিয়র কনসালট্যান্ট	MBBS, FCPS (Medicine)	18	1000	male	t
-61951e7f-61d2-9b97-dbe4-39a7e113a7ce	Dr. Sharmin Akter	ডা. শারমিন আক্তার	medicine	Consultant	কনসালট্যান্ট	MBBS, FCPS (Medicine)	9	800	female	t
-61251c7b-6b04-88e3-03a4-4069fac25ba2	Dr. Arifur Rahman	ডা. আরিফুর রহমান	medicine	Consultant	কনসালট্যান্ট	MBBS, MD (Internal Medicine)	10	900	male	t
-c2e6ca8c-1849-b126-862c-ffeac3389f81	Dr. Rezaul Karim	ডা. রেজাউল করিম	cardiology	Senior Consultant	সিনিয়র কনসালট্যান্ট	MBBS, MD (Cardiology)	22	1500	male	t
-651e3b38-29ae-696d-9ccd-1549415906c1	Dr. Nadia Islam	ডা. নাদিয়া ইসলাম	cardiology	Consultant	কনসালট্যান্ট	MBBS, MD (Cardiology)	11	1200	female	t
-3ae4fd5a-380b-1761-6f0b-e818487d4ce3	Dr. Anisur Rahman	ডা. আনিসুর রহমান	neurology	Consultant	কনসালট্যান্ট	MBBS, MD (Neurology)	14	1200	male	t
-00b67151-b942-1845-44d1-905beb4586bd	Dr. Lubna Yasmin	ডা. লুবনা ইয়াসমিন	neurology	Associate Consultant	অ্যাসোসিয়েট কনসালট্যান্ট	MBBS, MD (Neurology)	7	1000	female	t
-f0e1afe2-a689-4576-64d4-e230206f7535	Dr. Tanvir Hasan	ডা. তানভীর হাসান	gastroenterology	Consultant	কনসালট্যান্ট	MBBS, MD (Gastroenterology)	12	1000	male	t
-de34546d-b5df-1ad4-efdf-7902801b9470	Dr. Farzana Chowdhury	ডা. ফারজানা চৌধুরী	gastroenterology	Associate Consultant	অ্যাসোসিয়েট কনসালট্যান্ট	MBBS, FCPS (Medicine), MD (Gastroenterology)	8	900	female	t
-431d40d8-0987-7aae-07cd-3bc70f5c4e0d	Dr. Kamrul Islam	ডা. কামরুল ইসলাম	orthopedics	Senior Consultant	সিনিয়র কনসালট্যান্ট	MBBS, MS (Orthopaedics)	20	1200	male	t
-2d29a7f3-6732-88f6-aa3e-116d7ed87a9c	Dr. Sabrina Haque	ডা. সাবরিনা হক	orthopedics	Consultant	কনসালট্যান্ট	MBBS, MS (Orthopaedics)	7	1000	female	t
-3f6a0619-da20-b644-7d91-bb0f89f0a6a0	Dr. Rokeya Begum	ডা. রোকেয়া বেগম	gynecology	Senior Consultant	সিনিয়র কনসালট্যান্ট	MBBS, FCPS (Gynae & Obs)	21	1200	female	t
-2ecbc9c5-e974-ad68-1761-d18cbfabcdf4	Dr. Tahmina Ahmed	ডা. তাহমিনা আহমেদ	gynecology	Consultant	কনসালট্যান্ট	MBBS, FCPS (Gynae & Obs)	10	1000	female	t
-85ed390a-88ff-a86e-e786-d6f6387f07fc	Dr. Shafiqul Alam	ডা. শফিকুল আলম	pediatrics	Senior Consultant	সিনিয়র কনসালট্যান্ট	MBBS, FCPS (Paediatrics)	16	1000	male	t
-f2aab5d3-ebf2-6368-550f-6a368d096280	Dr. Ishrat Jahan	ডা. ইশরাত জাহান	pediatrics	Consultant	কনসালট্যান্ট	MBBS, DCH, FCPS (Paediatrics)	9	900	female	t
-c0de9d1d-1cae-e027-9b7b-3a77ca7d832f	Dr. Abdul Mannan	ডা. আবদুল মান্নান	ent	Consultant	কনসালট্যান্ট	MBBS, DLO, FCPS (ENT)	15	1000	male	t
-63b0ec29-c4ea-8745-3995-fc565731f829	Dr. Sumaiya Rahman	ডা. সুমাইয়া রহমান	dermatology	Consultant	কনসালট্যান্ট	MBBS, DDV, FCPS (Dermatology)	8	1000	female	t
-2064393f-0ed3-ed94-8945-3ea1bcb25306	Dr. Mizanur Rahman	ডা. মিজানুর রহমান	respiratory	Senior Consultant	সিনিয়র কনসালট্যান্ট	MBBS, FCPS (Medicine), MD (Chest)	19	1200	male	t
-2fb41fee-924e-9831-4761-ed056289bf65	Dr. Shahana Parvin	ডা. শাহানা পারভীন	endocrinology	Consultant	কনসালট্যান্ট	MBBS, MD (Endocrinology)	13	1200	female	t
-ac46d466-623c-d15d-2ec8-b500ed1d9918	Dr. Jahangir Alam	ডা. জাহাঙ্গীর আলম	ophthalmology	Consultant	কনসালট্যান্ট	MBBS, FCPS (Ophthalmology)	17	900	male	t
-21f2cc13-263f-6356-2b65-1a45d2dd1ab9	Dr. Rafiqul Islam	ডা. রফিকুল ইসলাম	psychiatry	Consultant	কনসালট্যান্ট	MBBS, FCPS (Psychiatry)	12	1200	male	t
-b0e57f07-bbda-a0f7-7044-5d7ab4bcfb93	Dr. Moinul Hossain	ডা. মঈনুল হোসেন	urology	Consultant	কনসালট্যান্ট	MBBS, MS (Urology)	14	1200	male	t
-\.
-
-
---
--- TOC entry 5108 (class 0 OID 16435)
--- Dependencies: 222
--- Data for Name: leave_day; Type: TABLE DATA; Schema: public; Owner: postgres
---
-
-COPY public.leave_day (id, doctor_id, date, reason) FROM stdin;
-23a387e7-d869-daa0-cb0a-9071082549d1	c2e6ca8c-1849-b126-862c-ffeac3389f81	2026-10-12	Conference
-00ac7ab9-f590-e983-dcdb-947d819d7907	431d40d8-0987-7aae-07cd-3bc70f5c4e0d	2026-11-01	Personal
-c88bdd3b-944e-d639-ee12-f425c23407b6	3ae4fd5a-380b-1761-6f0b-e818487d4ce3	2026-11-26	Conference abroad
-f02ab244-bbeb-912e-f47c-6097c1b61c6e	63b0ec29-c4ea-8745-3995-fc565731f829	2026-11-30	Personal
-\.
-
-
---
--- TOC entry 5115 (class 0 OID 16575)
--- Dependencies: 229
--- Data for Name: otp_code; Type: TABLE DATA; Schema: public; Owner: postgres
---
-
-COPY public.otp_code (phone, code_hash, expiry, attempts) FROM stdin;
-\.
-
-
---
--- TOC entry 5109 (class 0 OID 16453)
--- Dependencies: 223
--- Data for Name: patient; Type: TABLE DATA; Schema: public; Owner: postgres
---
-
-COPY public.patient (id, name, phone, age, sex, registered_by, phone_verified_at) FROM stdin;
-6c1ac21a-2cf6-cd0b-f241-35136965443f	Karim Hossain	01410007919	21	male	self	2026-11-21 19:41:17.889307+06
-53478790-910a-d1b1-dcd0-fdb3db42bd46	Nasima Khatun	01510015838	22	female	self	2026-11-21 18:41:17.889307+06
-e8ccd103-6a3e-ee80-165e-7394fcce9fef	Tariq Islam	01610023757	23	male	self	2026-11-21 17:41:17.889307+06
-c9e9a3fb-783b-3fd9-79ca-b87ff6239aef	Sumaiya Hossain	01710031676	24	female	self	2026-11-21 16:41:17.889307+06
-eefeeca2-c074-0193-082f-586d861c3577	Sakib Chowdhury	01810039595	25	male	front_desk	2026-11-21 15:41:17.889307+06
-445f4fa4-426d-59e6-fdd3-0ba4bcc39771	Rumana Islam	01910047514	8	female	self	2026-11-21 14:41:17.889307+06
-db89f151-6af5-1fa1-cbfc-0255d250e297	Jamal Sarker	01310055433	27	male	self	2026-11-21 13:41:17.889307+06
-126528a5-8365-81f6-3763-ffb48b60a2c0	Sadia Chowdhury	01410063352	28	female	self	2026-11-21 12:41:17.889307+06
-f3e1ec56-64cb-c762-cf89-d98e76a8621f	Nayeem Ahmed	01510071271	29	male	self	2026-11-21 11:41:17.889307+06
-36f68adc-a74d-6f9c-ef85-8d2501bf7277	Mim Begum	01610079190	30	female	front_desk	2026-11-21 10:41:17.889307+06
-b4f4f3a4-2e1d-3777-0547-f363a74663a5	Shafiq Rahman	01710087109	31	male	self	2026-11-21 09:41:17.889307+06
-ab4ad855-ca2d-3ae3-6708-279091893df3	রহিম উদ্দিন	01810095028	2	female	self	2026-11-21 08:41:17.889307+06
-72971f7a-106f-4f25-4855-72c6d4268b47	Karim Khan	01910102947	33	male	self	2026-11-21 07:41:17.889307+06
-7e2627ca-7619-e7b7-cdfd-5da1438f72e0	Nasima Rahman	01310110866	34	female	self	2026-11-21 06:41:17.889307+06
-a39970ae-d658-88d6-e75e-1c4dd99a8650	Tariq Uddin	01410118785	35	male	front_desk	2026-11-21 05:41:17.889307+06
-73a9c539-4566-ff6c-16fc-cb2c0a8e26ed	Sumaiya Khan	01510126704	36	female	self	2026-11-21 04:41:17.889307+06
-02e1aca7-bfab-6ab8-f189-00e2300567da	Sakib Roy	01610134623	37	male	self	2026-11-21 03:41:17.889307+06
-b26d22e8-ca17-cb57-1224-2baa44d6b2dd	Rumana Akter	01710142542	8	female	self	2026-11-21 02:41:17.889307+06
-70f639ea-35b1-517a-ef74-0fe8bc897326	Jamal Hossain	01810150461	39	male	self	2026-11-21 01:41:17.889307+06
-8bcbc33f-c64d-661f-9bba-4ce4820b91c0	Sadia Khatun	01910158380	40	female	front_desk	2026-11-21 00:41:17.889307+06
-eb300bd4-e3a6-cf88-a13c-7f59c7a63fae	Nayeem Islam	01310166299	41	male	self	2026-11-20 23:41:17.889307+06
-be4986fd-1a44-09f5-2276-c97aace2d7e4	Mim Hossain	01410174218	42	female	self	2026-11-20 22:41:17.889307+06
-fe2c27e9-9a19-f788-e9dd-31999865a78a	Shafiq Chowdhury	01510182137	43	male	self	2026-11-20 21:41:17.889307+06
-0de27161-5967-8527-f248-1d1d13283a4c	রহিম উদ্দিন	01610190056	2	female	self	2026-11-20 20:41:17.889307+06
-74c60f02-0661-a09e-9bc3-270957cc9b3b	Karim Sarker	01710197975	45	male	front_desk	2026-11-20 19:41:17.889307+06
-79f4e124-e65e-e703-d895-4d7fd3763340	Nasima Chowdhury	01810205894	46	female	self	2026-11-20 18:41:17.889307+06
-5ff4b567-bbd3-ec37-d26e-a372c0aa7b5c	Tariq Ahmed	01910213813	47	male	self	2026-11-20 17:41:17.889307+06
-a8a03967-4d2a-8286-e3bf-9caa48dd9af7	Sumaiya Begum	01310221732	48	female	self	2026-11-20 16:41:17.889307+06
-2eeda9c0-8c10-4729-d6e3-d172c6dc5c28	Sakib Rahman	01410229651	49	male	self	2026-11-20 15:41:17.889307+06
-072737be-8147-a106-52c3-7e4fa983afce	Rumana Ahmed	01510237570	8	female	front_desk	2026-11-20 14:41:17.889307+06
-662ff199-9b53-60c1-de4a-55194e27bbdd	Jamal Khan	01610245489	51	male	self	2026-11-20 13:41:17.889307+06
-979b007e-0279-df99-bfbf-2373642eb4c3	Sadia Rahman	01710253408	52	female	self	2026-11-20 12:41:17.889307+06
-05a29375-2534-b4d4-2965-8db94594c1c5	Nayeem Uddin	01810261327	53	male	self	2026-11-20 11:41:17.889307+06
-c2bc75ef-18f8-c387-696e-5a7f598cf5d7	Mim Khan	01910269246	54	female	self	2026-11-20 10:41:17.889307+06
-88e940ca-54b7-c0d2-325d-ce177ab6e98d	Shafiq Roy	01310277165	55	male	front_desk	2026-11-20 09:41:17.889307+06
-f7c04a11-441c-e352-e06d-a6db85e7d9c1	রহিম উদ্দিন	01410285084	2	female	self	2026-11-20 08:41:17.889307+06
-1ecc6ca5-6504-1adb-ee70-31c3226f60e9	Karim Hossain	01510293003	57	male	self	2026-11-20 07:41:17.889307+06
-7df3df3b-f7cb-3918-a8ee-f47b45e54801	Nasima Khatun	01610300922	58	female	self	2026-11-20 06:41:17.889307+06
-3315288a-7b05-5f5f-6040-942201e21038	Tariq Islam	01710308841	59	male	self	2026-11-20 05:41:17.889307+06
-8cea8410-33cb-124a-d911-1cc184b1e3dc	Sumaiya Hossain	01810316760	60	female	front_desk	2026-11-20 04:41:17.889307+06
-ae7dcf58-129c-2b07-ae13-1f51b330201a	Sakib Chowdhury	01910324679	61	male	self	2026-11-20 03:41:17.889307+06
-c91ef6b4-3b39-f224-d8f4-f54cc477c461	Rumana Islam	01310332598	8	female	self	2026-11-20 02:41:17.889307+06
-c9c05ca9-696d-d0aa-e2ba-9758807a4e2b	Jamal Sarker	01410340517	63	male	self	2026-11-20 01:41:17.889307+06
-8f308836-62a9-affa-9e24-fdaa7b28f666	Sadia Chowdhury	01510348436	64	female	self	2026-11-20 00:41:17.889307+06
-711e33f0-ffbc-a346-b103-65e057c4dccf	Nayeem Ahmed	01610356355	65	male	front_desk	2026-11-19 23:41:17.889307+06
-b876474d-5655-7e01-e518-447576279527	Mim Begum	01710364274	66	female	self	2026-11-19 22:41:17.889307+06
-a69b39e8-5f6b-a83c-cd19-ae8715ee7a4d	Shafiq Rahman	01810372193	67	male	self	2026-11-19 21:41:17.889307+06
-46f72c92-058a-ca63-e8b4-fbf1d8708736	রহিম উদ্দিন	01910380112	2	female	self	2026-11-19 20:41:17.889307+06
-b70471ed-a511-c202-465c-3fcddca27ebd	Karim Khan	01310388031	69	male	self	2026-11-19 19:41:17.889307+06
-4267be6b-9112-4ac3-ce93-791e25eb74e9	Nasima Rahman	01410395950	70	female	front_desk	2026-11-19 18:41:17.889307+06
-20d8b2b9-4814-8cad-b0d9-b38c70f98ce4	Tariq Uddin	01510403869	71	male	self	2026-11-19 17:41:17.889307+06
-737b3fe7-196f-d321-fd0c-15c5b19a83bc	Sumaiya Khan	01610411788	72	female	self	2026-11-19 16:41:17.889307+06
-593fd0c1-97b4-32c1-8b6e-c4208120a0d6	Sakib Roy	01710419707	73	male	self	2026-11-19 15:41:17.889307+06
-d24404c3-7cb0-b55d-d5d3-db3730c3dc78	Rumana Akter	01810427626	8	female	self	2026-11-19 14:41:17.889307+06
-516e792b-bbe2-afa8-f6f6-e52de3f29fe5	Jamal Hossain	01910435545	20	male	front_desk	2026-11-19 13:41:17.889307+06
-faf597e4-868f-e35a-f99f-cbb581928a8d	Sadia Khatun	01310443464	21	female	self	2026-11-19 12:41:17.889307+06
-63221534-5a53-f33b-db18-a5aa198263b5	Nayeem Islam	01410451383	22	male	self	2026-11-19 11:41:17.889307+06
-f19c3071-57c4-77a1-a053-f165e1e5e8b5	Mim Hossain	01510459302	23	female	self	2026-11-19 10:41:17.889307+06
-60b44f67-e6db-f259-169b-7753f1b851af	Shafiq Chowdhury	01610467221	24	male	self	2026-11-19 09:41:17.889307+06
-91d884d7-bc88-23e8-667f-074f8c6a0df8	রহিম উদ্দিন	01710475140	2	female	front_desk	2026-11-19 08:41:17.889307+06
-57f6091e-75f9-8ce9-54bb-4bf49201016c	Karim Sarker	01810483059	26	male	self	2026-11-19 07:41:17.889307+06
-b3b5c646-5733-ef01-8602-94fb2531d429	Nasima Chowdhury	01910490978	27	female	self	2026-11-19 06:41:17.889307+06
-d42d9843-5345-a6ac-b4a1-456e96b39a9c	Tariq Ahmed	01310498897	28	male	self	2026-11-19 05:41:17.889307+06
-9f2afc8c-815f-64e9-5339-39282dd2c556	Sumaiya Begum	01410506816	29	female	self	2026-11-19 04:41:17.889307+06
-a45948a2-8c37-4ebe-e93a-f5c82920a8ac	Sakib Rahman	01510514735	30	male	front_desk	2026-11-19 03:41:17.889307+06
-6b982b6a-d6ed-04d2-464a-b8726df9ced6	Rumana Ahmed	01610522654	8	female	self	2026-11-19 02:41:17.889307+06
-8b87a8bf-ac8f-47a7-35ad-3ab9e1c23f06	Jamal Khan	01710530573	32	male	self	2026-11-19 01:41:17.889307+06
-6bf00fb1-9b5b-d688-95cf-7093b5cb084d	Sadia Rahman	01810538492	33	female	self	2026-11-19 00:41:17.889307+06
-5fa0d016-a423-ab03-fe14-3fca6163452f	Nayeem Uddin	01910546411	34	male	self	2026-11-18 23:41:17.889307+06
-b1cbf2b0-03b0-6939-9baa-96da51058ab7	Mim Khan	01310554330	35	female	front_desk	2026-11-18 22:41:17.889307+06
-840af134-c506-b67a-7666-2825b1e13960	Shafiq Roy	01410562249	36	male	self	2026-11-18 21:41:17.889307+06
-9c42973b-91fa-27dc-26ec-fd65d744307a	রহিম উদ্দিন	01510570168	2	female	self	2026-11-18 20:41:17.889307+06
-6ae5e97b-32e9-16f8-00fa-616ed549ecae	Karim Hossain	01610578087	38	male	self	2026-11-18 19:41:17.889307+06
-9ef775bd-a379-52e8-6d5e-8549bbfa67bf	Nasima Khatun	01710586006	39	female	self	2026-11-18 18:41:17.889307+06
-48c55756-ef1c-a456-9908-0911445373e7	Tariq Islam	01810593925	40	male	front_desk	2026-11-18 17:41:17.889307+06
-92eb0d04-1ff9-c848-f847-e9d01faf5286	Sumaiya Hossain	01910601844	41	female	self	2026-11-18 16:41:17.889307+06
-e602aebe-02ec-33c0-696d-46db4b6666b8	Sakib Chowdhury	01310609763	42	male	self	2026-11-18 15:41:17.889307+06
-be325723-e040-af43-3a50-92d52194272b	Rumana Islam	01410617682	8	female	self	2026-11-18 14:41:17.889307+06
-6f135d20-ef61-16c5-cdaf-36a276cee904	Jamal Sarker	01510625601	44	male	self	2026-11-18 13:41:17.889307+06
-61a74455-aaef-1552-2ca7-c66d94aeb24e	Sadia Chowdhury	01610633520	45	female	front_desk	2026-11-18 12:41:17.889307+06
-af5a7c68-ee8c-fa32-22db-81ff7eabad4d	Nayeem Ahmed	01710641439	46	male	self	2026-11-18 11:41:17.889307+06
-12ba7956-a643-ebe6-6c9f-c3bb4b78a072	Mim Begum	01810649358	47	female	self	2026-11-18 10:41:17.889307+06
-2bbd03a5-ea37-8db3-194b-94b99ab2c87e	Shafiq Rahman	01910657277	48	male	self	2026-11-18 09:41:17.889307+06
-0c76d9c9-6a5e-da8f-1ae4-54d7bc24fdc0	রহিম উদ্দিন	01310665196	2	female	self	2026-11-18 08:41:17.889307+06
-c461b1e1-5918-6026-2a59-489740a46161	Karim Khan	01410673115	50	male	front_desk	2026-11-18 07:41:17.889307+06
-9ef9fe95-98ff-8dda-1d81-825a74fb3069	Nasima Rahman	01510681034	51	female	self	2026-11-18 06:41:17.889307+06
-b2feb6b4-4154-1825-fd2e-a89e27667210	Tariq Uddin	01610688953	52	male	self	2026-11-18 05:41:17.889307+06
-20c9c49b-5b3a-35a7-3afa-b99451bd83b6	Sumaiya Khan	01710696872	53	female	self	2026-11-18 04:41:17.889307+06
-17372370-8b36-fa03-6bea-6e8a6b81b0c9	Sakib Roy	01810704791	54	male	self	2026-11-18 03:41:17.889307+06
-97deb575-552a-1152-03f9-f10eb2177ef5	Rumana Akter	01910712710	8	female	front_desk	2026-11-18 02:41:17.889307+06
-22a67b32-61c2-5a3d-746f-7e561f917ebd	Jamal Hossain	01310720629	56	male	self	2026-11-18 01:41:17.889307+06
-6a465d74-fa3d-fbef-1df4-5c116fd493dd	Sadia Khatun	01410728548	57	female	self	2026-11-18 00:41:17.889307+06
-806a83e3-07e9-8ac3-69d8-c3fb6d6addcd	Nayeem Islam	01510736467	58	male	self	2026-11-17 23:41:17.889307+06
-f61899da-baa6-5ca9-6b0f-2aa759aad54c	Mim Hossain	01610744386	59	female	self	2026-11-17 22:41:17.889307+06
-be90c39a-dc00-e42e-c55d-f8e811378bbe	Shafiq Chowdhury	01710752305	60	male	front_desk	2026-11-17 21:41:17.889307+06
-cfb48c38-3376-13a5-b37e-8e5f7608318c	রহিম উদ্দিন	01810760224	2	female	self	2026-11-17 20:41:17.889307+06
-6d3732a8-e84e-ffc2-e4fd-b9ac0a477e21	Karim Sarker	01910768143	62	male	self	2026-11-17 19:41:17.889307+06
-0503993f-7368-31a1-8a67-cc53183b82a5	Nasima Chowdhury	01310776062	63	female	self	2026-11-17 18:41:17.889307+06
-87bc4c7f-6129-0fe4-e5a7-7fe828dc760b	Tariq Ahmed	01410783981	64	male	self	2026-11-17 17:41:17.889307+06
-11b63d1e-54ef-dc18-bcd2-db7c6d975982	Sumaiya Begum	01510791900	65	female	front_desk	2026-11-17 16:41:17.889307+06
-\.
-
-
---
--- TOC entry 5113 (class 0 OID 16542)
--- Dependencies: 227
--- Data for Name: queue_state; Type: TABLE DATA; Schema: public; Owner: postgres
---
-
-COPY public.queue_state (doctor_id, date, now_serving_id, updated_at) FROM stdin;
-f0e1afe2-a689-4576-64d4-e230206f7535	2026-11-21	7644f087-1c4e-1896-e4f6-8fcde82ea61f	2026-11-21 20:43:25.742337+06
-\.
-
-
---
--- TOC entry 5107 (class 0 OID 16416)
--- Dependencies: 221
--- Data for Name: schedule_rule; Type: TABLE DATA; Schema: public; Owner: postgres
---
-
-COPY public.schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) FROM stdin;
-9dda79bb-d35d-5d40-a1fe-56c810606128	3243093c-d76e-5e4a-91ab-3f719f0f5f62	0	17:00:00	21:00:00	12	20	Room 101
-ec1973d7-195e-7011-e1fb-6f89ced6864f	3243093c-d76e-5e4a-91ab-3f719f0f5f62	2	17:00:00	21:00:00	12	20	Room 101
-9cf85eff-1edf-3753-c286-84409d02abfc	3243093c-d76e-5e4a-91ab-3f719f0f5f62	4	17:00:00	21:00:00	12	20	Room 101
-b2857daf-1f21-ce37-f5df-d9dccb7e7836	61951e7f-61d2-9b97-dbe4-39a7e113a7ce	6	10:00:00	13:00:00	10	18	Room 102
-e5360be4-3a4d-49a0-4c2b-10941c38f48c	61951e7f-61d2-9b97-dbe4-39a7e113a7ce	1	10:00:00	13:00:00	10	18	Room 102
-039cc84a-24b9-5006-18a0-81f4a1ace6fc	61951e7f-61d2-9b97-dbe4-39a7e113a7ce	3	10:00:00	13:00:00	10	18	Room 102
-739ca523-57d9-5a11-d97a-5d88501b25dd	61251c7b-6b04-88e3-03a4-4069fac25ba2	6	17:00:00	21:00:00	12	20	Room 103
-700a21d3-b3a7-0981-4cef-be862035d7ba	61251c7b-6b04-88e3-03a4-4069fac25ba2	1	17:00:00	21:00:00	12	20	Room 103
-5e7a1fa8-937d-bd94-3f97-880208e5e7c9	61251c7b-6b04-88e3-03a4-4069fac25ba2	3	17:00:00	21:00:00	12	20	Room 103
-cef76d80-a65b-9a70-1df9-f1d95d24b263	c2e6ca8c-1849-b126-862c-ffeac3389f81	6	18:00:00	21:00:00	15	12	Room 201
-ff97e2d7-7c10-0843-aa1e-8d58b2d036a5	c2e6ca8c-1849-b126-862c-ffeac3389f81	1	18:00:00	21:00:00	15	12	Room 201
-ad5bb25e-7fce-6cce-0706-e959571f65d8	c2e6ca8c-1849-b126-862c-ffeac3389f81	3	18:00:00	21:00:00	15	12	Room 201
-529e1258-16df-c66a-fd36-fc8058ead9a9	651e3b38-29ae-696d-9ccd-1549415906c1	0	10:00:00	13:00:00	15	12	Room 202
-ce9c8c0d-83e9-5056-38e4-e382949eb2ef	651e3b38-29ae-696d-9ccd-1549415906c1	2	10:00:00	13:00:00	15	12	Room 202
-9b21c55b-3fe9-df60-f692-5ef5741f3eb2	3ae4fd5a-380b-1761-6f0b-e818487d4ce3	0	17:00:00	20:00:00	15	12	Room 203
-f36551a4-02db-d486-5f01-017065b258a4	3ae4fd5a-380b-1761-6f0b-e818487d4ce3	3	17:00:00	20:00:00	15	12	Room 203
-31645eab-13b1-adaf-343e-aacb8b5f044d	00b67151-b942-1845-44d1-905beb4586bd	6	10:00:00	13:00:00	15	12	Room 204
-6dfe27ea-4039-4185-de7f-5da576894eb4	00b67151-b942-1845-44d1-905beb4586bd	1	10:00:00	13:00:00	15	12	Room 204
-64509d0f-2beb-a526-53a3-53439b4aaa73	f0e1afe2-a689-4576-64d4-e230206f7535	6	17:30:00	20:30:00	12	15	Room 301
-5b48e624-e867-3327-a62b-6603a9403881	f0e1afe2-a689-4576-64d4-e230206f7535	1	17:30:00	20:30:00	12	15	Room 301
-d387d026-1c0b-0634-cd7a-0b77192033ad	f0e1afe2-a689-4576-64d4-e230206f7535	4	17:30:00	20:30:00	12	15	Room 301
-a86013c4-36ac-69ac-8188-73174e16f3cb	f0e1afe2-a689-4576-64d4-e230206f7535	4	10:00:00	12:00:00	12	10	Room 301
-dc2c6647-c83e-091f-2d9c-cbc22fe65290	de34546d-b5df-1ad4-efdf-7902801b9470	0	10:00:00	12:30:00	10	15	Room 302
-625d9d04-c188-7bff-4a77-a52a23c58023	de34546d-b5df-1ad4-efdf-7902801b9470	2	10:00:00	12:30:00	10	15	Room 302
-9b666c68-ade4-d6be-89a0-beedc5e62295	431d40d8-0987-7aae-07cd-3bc70f5c4e0d	6	16:00:00	20:00:00	15	16	Room 303
-13125c97-06bc-24f3-8d3a-a598a59d73de	431d40d8-0987-7aae-07cd-3bc70f5c4e0d	2	16:00:00	20:00:00	15	16	Room 303
-fc5eff46-7e43-661d-a748-85ed0b0cfa6f	431d40d8-0987-7aae-07cd-3bc70f5c4e0d	4	16:00:00	20:00:00	15	16	Room 303
-a4a22372-d5a2-ba0d-7394-c64d0e6c4c93	2d29a7f3-6732-88f6-aa3e-116d7ed87a9c	1	10:30:00	13:00:00	15	10	Room 304
-b4f8d192-bb56-7762-55ff-3be9f1ceeaec	2d29a7f3-6732-88f6-aa3e-116d7ed87a9c	3	10:30:00	13:00:00	15	10	Room 304
-8a2a2086-b2cd-0a1b-7c62-3562c2686707	3f6a0619-da20-b644-7d91-bb0f89f0a6a0	6	16:00:00	20:00:00	12	20	Room 401
-54f266f4-27e1-2803-f4b9-64b56488135f	3f6a0619-da20-b644-7d91-bb0f89f0a6a0	1	16:00:00	20:00:00	12	20	Room 401
-1dba813b-aab8-572e-d7a9-dafcebf77c10	3f6a0619-da20-b644-7d91-bb0f89f0a6a0	3	16:00:00	20:00:00	12	20	Room 401
-c710c2df-a14e-dd08-3fbe-91ea6b3221e1	2ecbc9c5-e974-ad68-1761-d18cbfabcdf4	0	10:00:00	13:00:00	12	15	Room 402
-f258477f-1289-388b-a734-045e6b5e76d5	2ecbc9c5-e974-ad68-1761-d18cbfabcdf4	2	10:00:00	13:00:00	12	15	Room 402
-b4fa9700-a5f6-9b66-b934-a593325f0028	2ecbc9c5-e974-ad68-1761-d18cbfabcdf4	4	10:00:00	13:00:00	12	15	Room 402
-9b233a6f-21d5-6a5a-8a88-a607a4b58fd3	85ed390a-88ff-a86e-e786-d6f6387f07fc	6	17:00:00	20:00:00	10	18	Room 403
-8c036e17-be54-3b8d-33dc-c236c46d1514	85ed390a-88ff-a86e-e786-d6f6387f07fc	0	17:00:00	20:00:00	10	18	Room 403
-26a1de0d-27c4-1856-74ab-bc4f01d59199	85ed390a-88ff-a86e-e786-d6f6387f07fc	2	17:00:00	20:00:00	10	18	Room 403
-924dec19-f2d2-e54d-9910-ab21a01c634f	85ed390a-88ff-a86e-e786-d6f6387f07fc	4	17:00:00	20:00:00	10	18	Room 403
-6d3ebebe-664a-2a93-eace-17cc08b84c4b	f2aab5d3-ebf2-6368-550f-6a368d096280	1	10:00:00	13:00:00	10	18	Room 404
-799d2b74-0bba-c469-bed1-d3029b495c46	f2aab5d3-ebf2-6368-550f-6a368d096280	3	10:00:00	13:00:00	10	18	Room 404
-528f4821-f0a0-8452-69a3-dce8b3ad8485	c0de9d1d-1cae-e027-9b7b-3a77ca7d832f	0	17:00:00	20:00:00	12	15	Room 501
-5b8130da-f2df-8d5e-39cf-ce0d0679f1a5	c0de9d1d-1cae-e027-9b7b-3a77ca7d832f	2	17:00:00	20:00:00	12	15	Room 501
-cb5d64c4-8391-7209-2dba-aef7b8a30db8	c0de9d1d-1cae-e027-9b7b-3a77ca7d832f	4	17:00:00	20:00:00	12	15	Room 501
-36412984-9e77-4521-b023-c44b27472226	63b0ec29-c4ea-8745-3995-fc565731f829	6	17:00:00	20:00:00	10	18	Room 502
-dee91d8f-2e34-c70a-96ae-5b102b15cf31	63b0ec29-c4ea-8745-3995-fc565731f829	1	17:00:00	20:00:00	10	18	Room 502
-c614b4ae-9a68-c8a5-45e2-94ad784c86df	63b0ec29-c4ea-8745-3995-fc565731f829	3	17:00:00	20:00:00	10	18	Room 502
-2c78c98f-554a-a2ee-b4a6-f4ae29620e0d	2064393f-0ed3-ed94-8945-3ea1bcb25306	0	17:00:00	20:00:00	15	12	Room 503
-c61e34ee-ec95-ce71-b289-a80ded1d8908	2064393f-0ed3-ed94-8945-3ea1bcb25306	3	17:00:00	20:00:00	15	12	Room 503
-3c969efd-bf0b-8b96-544d-e4e571b66311	2fb41fee-924e-9831-4761-ed056289bf65	6	10:00:00	13:00:00	15	12	Room 504
-d36de37d-7abc-cb16-65ae-7657069656df	2fb41fee-924e-9831-4761-ed056289bf65	2	10:00:00	13:00:00	15	12	Room 504
-5b6edeac-e93a-b71d-951a-174cc69f9509	2fb41fee-924e-9831-4761-ed056289bf65	4	10:00:00	13:00:00	15	12	Room 504
-8c430d2f-9592-b98d-dc67-3c3c727a9e02	ac46d466-623c-d15d-2ec8-b500ed1d9918	6	16:00:00	19:00:00	10	18	Room 601
-fa8325fa-da30-61cb-87a3-bd4b9a25e1f2	ac46d466-623c-d15d-2ec8-b500ed1d9918	1	16:00:00	19:00:00	10	18	Room 601
-9b34c786-ebbb-dd75-4ea6-db958913354e	ac46d466-623c-d15d-2ec8-b500ed1d9918	3	16:00:00	19:00:00	10	18	Room 601
-3c3d5683-9ec4-c446-2e61-3c16d20a01bf	21f2cc13-263f-6356-2b65-1a45d2dd1ab9	2	17:00:00	20:00:00	20	9	Room 602
-92b083c5-3894-2d12-ef17-30c2ace7cfd2	21f2cc13-263f-6356-2b65-1a45d2dd1ab9	4	17:00:00	20:00:00	20	9	Room 602
-20d4fafc-ecf9-104e-c7e3-66c8444e9b70	b0e57f07-bbda-a0f7-7044-5d7ab4bcfb93	0	18:00:00	21:00:00	15	12	Room 603
-34204609-fad9-2358-446f-5ac91be5ee79	b0e57f07-bbda-a0f7-7044-5d7ab4bcfb93	3	18:00:00	21:00:00	15	12	Room 603
-\.
-
-
---
--- TOC entry 5116 (class 0 OID 16586)
--- Dependencies: 230
--- Data for Name: setting; Type: TABLE DATA; Schema: public; Owner: postgres
---
-
-COPY public.setting (key, value) FROM stdin;
-reminder	{"time": "19:00", "daysBefore": 1}
-booking	{"openDays": 14, "closeMinutesBefore": 60}
-\.
-
-
---
--- TOC entry 5114 (class 0 OID 16560)
--- Dependencies: 228
--- Data for Name: sms_message; Type: TABLE DATA; Schema: public; Owner: postgres
---
-
-COPY public.sms_message (id, phone, kind, body, appointment_id, status, sent_at) FROM stdin;
-5106fdf2-7868-5f73-7a07-dbba8e710453	01410007919	confirmation	Lumina Specialized Hospital: Booked with Dr. Tanvir Hasan on today, 17:30, serial 1. Room 301.	21c84e1b-33ea-335b-40e5-724c1c2e0a86	sent	2026-11-21 18:44:03.169623+06
-d56c8eac-0974-c801-56b5-5b80583620d7	01510015838	confirmation	Lumina Specialized Hospital: Booked with Dr. Rezaul Karim, 18:00, serial 1. Room 201.	c8fa224d-5e1f-092a-196e-fab3e93e38d1	sent	2026-11-21 20:14:03.169623+06
-\.
-
-
---
--- TOC entry 5105 (class 0 OID 16389)
--- Dependencies: 219
--- Data for Name: specialty; Type: TABLE DATA; Schema: public; Owner: postgres
---
-
-COPY public.specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) FROM stdin;
-medicine	Medicine	মেডিসিন	Fever, weakness, general health problems and first check-ups.	জ্বর, দুর্বলতা, সাধারণ স্বাস্থ্য সমস্যা ও প্রাথমিক পরীক্ষা।	1	t
-cardiology	Cardiology	হৃদরোগ	Heart problems, high blood pressure and palpitations.	হৃদযন্ত্রের সমস্যা, উচ্চ রক্তচাপ ও বুক ধড়ফড়।	2	t
-neurology	Neurology	স্নায়ুরোগ	Headache, migraine, dizziness, numbness and nerve problems.	মাথাব্যথা, মাইগ্রেন, মাথা ঘোরা, অবশ ভাব ও স্নায়ুর সমস্যা।	3	t
-gastroenterology	Gastroenterology & Liver	পরিপাকতন্ত্র ও লিভার	Stomach pain, acidity, diarrhoea, constipation, jaundice and liver problems.	পেট ব্যথা, গ্যাস্ট্রিক, ডায়রিয়া, কোষ্ঠকাঠিন্য, জন্ডিস ও লিভারের সমস্যা।	4	t
-orthopedics	Orthopaedics	অর্থোপেডিক্স	Bone, joint, back and neck pain, fractures and injuries.	হাড়, জোড়া, কোমর ও ঘাড়ের ব্যথা, হাড় ভাঙা ও আঘাত।	5	t
-gynecology	Gynaecology & Obstetrics	স্ত্রীরোগ ও প্রসূতি	Periods, pregnancy and women's health.	মাসিক, গর্ভাবস্থা ও নারীস্বাস্থ্য।	6	t
-pediatrics	Paediatrics	শিশুরোগ	Health problems of babies and children.	নবজাতক ও শিশুদের স্বাস্থ্য সমস্যা।	7	t
-ent	ENT (Ear, Nose & Throat)	নাক, কান ও গলা	Ear pain, hearing loss, sinus, tonsils and throat problems.	কানে ব্যথা, কম শোনা, সাইনাস, টনসিল ও গলার সমস্যা।	8	t
-dermatology	Dermatology	চর্মরোগ	Skin rashes, itching, acne, allergies and hair loss.	চামড়ায় ফুসকুড়ি, চুলকানি, ব্রণ, এলার্জি ও চুল পড়া।	9	t
-respiratory	Respiratory Medicine	বক্ষব্যাধি	Long-lasting cough, asthma, wheezing and lung problems.	দীর্ঘদিনের কাশি, হাঁপানি, বুকে সাঁই সাঁই শব্দ ও ফুসফুসের সমস্যা।	10	t
-endocrinology	Diabetes & Endocrinology	ডায়াবেটিস ও হরমোন	Diabetes, thyroid and hormone problems.	ডায়াবেটিস, থাইরয়েড ও হরমোনের সমস্যা।	11	t
-ophthalmology	Eye (Ophthalmology)	চক্ষু	Eye pain, redness and blurred vision.	চোখে ব্যথা, চোখ লাল হওয়া ও ঝাপসা দেখা।	12	t
-psychiatry	Psychiatry	মানসিক স্বাস্থ্য	Anxiety, low mood, sleep problems and stress.	দুশ্চিন্তা, মন খারাপ, ঘুমের সমস্যা ও মানসিক চাপ।	13	t
-urology	Kidney & Urology	কিডনি ও মূত্ররোগ	Burning urine, kidney stones and prostate problems.	প্রস্রাবে জ্বালাপোড়া, কিডনিতে পাথর ও প্রোস্টেটের সমস্যা।	14	t
-\.
-
-
---
--- TOC entry 5111 (class 0 OID 16485)
--- Dependencies: 225
--- Data for Name: staff_user; Type: TABLE DATA; Schema: public; Owner: postgres
---
-
-COPY public.staff_user (id, name, username, password_hash, role, doctor_id, active) FROM stdin;
-d2c88ca7-f2ab-24cc-5cc5-67313d450624	Hospital Admin	admin	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	admin	\N	t
-176bed87-b982-4020-15af-90e63b9bb816	Front Desk	frontdesk	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	front_desk	\N	t
-2181f467-3c68-4869-e7d3-2264900d2ff2	Dr. Mahmudul Hasan	dr.mahmudul	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	3243093c-d76e-5e4a-91ab-3f719f0f5f62	t
-7f7d0f98-0b50-9697-188d-22b5acbff36e	Dr. Sharmin Akter	dr.sharmin	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	61951e7f-61d2-9b97-dbe4-39a7e113a7ce	t
-16cfdfa9-a0c6-895e-a443-42f7fba47c01	Dr. Arifur Rahman	dr.arifur	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	61251c7b-6b04-88e3-03a4-4069fac25ba2	t
-e4de816b-eb04-8e79-a010-252c11d87b86	Dr. Rezaul Karim	dr.rezaul	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	c2e6ca8c-1849-b126-862c-ffeac3389f81	t
-eaee1d0a-9671-9edd-ee44-ad7126af69e4	Dr. Nadia Islam	dr.nadia	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	651e3b38-29ae-696d-9ccd-1549415906c1	t
-6ad9fd21-d561-0c3f-9618-83d04cced385	Dr. Anisur Rahman	dr.anisur	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	3ae4fd5a-380b-1761-6f0b-e818487d4ce3	t
-7fd3cf6c-b666-890f-5dad-2fc78a5a1d62	Dr. Lubna Yasmin	dr.lubna	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	00b67151-b942-1845-44d1-905beb4586bd	t
-ce0e8eaf-4224-f490-eef4-a9c3144ae428	Dr. Tanvir Hasan	dr.tanvir	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	f0e1afe2-a689-4576-64d4-e230206f7535	t
-a7454726-2781-0efc-3837-f908c219cfd8	Dr. Farzana Chowdhury	dr.farzana	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	de34546d-b5df-1ad4-efdf-7902801b9470	t
-afb8a684-c645-c83d-a37d-8f74f5c101e2	Dr. Kamrul Islam	dr.kamrul	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	431d40d8-0987-7aae-07cd-3bc70f5c4e0d	t
-bb48a44e-fa91-8c23-28b3-e6f523fd496e	Dr. Sabrina Haque	dr.sabrina	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	2d29a7f3-6732-88f6-aa3e-116d7ed87a9c	t
-35a7220b-d470-52c7-5c6c-b27af741db1d	Dr. Rokeya Begum	dr.rokeya	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	3f6a0619-da20-b644-7d91-bb0f89f0a6a0	t
-5411e46c-0280-1830-2748-05b1ba486713	Dr. Tahmina Ahmed	dr.tahmina	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	2ecbc9c5-e974-ad68-1761-d18cbfabcdf4	t
-605eaec6-c7bd-b193-e170-93fd8e099324	Dr. Shafiqul Alam	dr.shafiqul	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	85ed390a-88ff-a86e-e786-d6f6387f07fc	t
-b702e85a-b339-b8ad-3e5e-4839b7383b7c	Dr. Ishrat Jahan	dr.ishrat	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	f2aab5d3-ebf2-6368-550f-6a368d096280	t
-b777be20-4772-b6a9-beb7-bab9bf975c7d	Dr. Abdul Mannan	dr.abdul	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	c0de9d1d-1cae-e027-9b7b-3a77ca7d832f	t
-4506585d-bf84-c351-0357-b4f8531d331a	Dr. Sumaiya Rahman	dr.sumaiya	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	63b0ec29-c4ea-8745-3995-fc565731f829	t
-3d91be90-3d82-f538-755b-04bdcf5eeb0c	Dr. Mizanur Rahman	dr.mizanur	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	2064393f-0ed3-ed94-8945-3ea1bcb25306	t
-f3917850-78fd-6685-e872-1613201e860d	Dr. Shahana Parvin	dr.shahana	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	2fb41fee-924e-9831-4761-ed056289bf65	t
-104211aa-64cb-270c-45bc-6c4c0fc04b61	Dr. Jahangir Alam	dr.jahangir	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	ac46d466-623c-d15d-2ec8-b500ed1d9918	t
-2fd7c59e-2cf4-5214-f6e0-840a3cb5c428	Dr. Rafiqul Islam	dr.rafiqul	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	21f2cc13-263f-6356-2b65-1a45d2dd1ab9	t
-7c169e8e-ffe7-0759-b43e-1ae33fb4830a	Dr. Moinul Hossain	dr.moinul	$2b$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW	doctor	b0e57f07-bbda-a0f7-7044-5d7ab4bcfb93	t
-\.
-
-
---
--- TOC entry 5110 (class 0 OID 16466)
--- Dependencies: 224
--- Data for Name: triage_session; Type: TABLE DATA; Schema: public; Owner: postgres
---
-
-COPY public.triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, summary, created_at) FROM stdin;
-02fd0613-d32d-3c29-b574-5ed3a0c06faa	6c1ac21a-2cf6-cd0b-f241-35136965443f	en	Stomach pain and acidity after meals for two weeks	[{"answer": "Moderate", "question": "How bad is it?"}]	complete	gastroenterology	routine	Burning stomach pain after meals is usually seen by a gastroenterologist.	{stomach_pain,acidity}	{"duration": "1–2 weeks", "severity": "Moderate", "symptoms": ["Stomach pain", "Acidity"]}	2026-11-21 20:42:03.640335+06
-bac9e1da-09f9-0f01-a3e1-9e1fbd9f3ff9	53478790-910a-d1b1-dcd0-fdb3db42bd46	bn	প্রেশার বেড়েছে, মাঝে মাঝে বুক ধড়ফড় করে	[{"answer": "কয়েক দিন", "question": "কত দিন ধরে এই সমস্যা হচ্ছে?"}]	complete	cardiology	within_48h	উচ্চ রক্তচাপ ও বুক ধড়ফড় করার জন্য হৃদরোগ বিশেষজ্ঞ দেখানো উচিত।	{high_bp,palpitations}	{"duration": "কয়েক দিন", "severity": "মাঝারি", "symptoms": ["উচ্চ রক্তচাপ", "বুক ধড়ফড়"]}	2026-11-21 20:42:03.640335+06
-6ce1a6df-e1e3-fb39-c3e1-5706f562b35e	\N	bn	হঠাৎ বুকে ব্যথা ও ঘাম হচ্ছে	[]	emergency	\N	\N	Emergency symptom detected.	{chest_pain}	\N	2026-11-21 20:42:03.640335+06
-\.
-
-
---
--- TOC entry 4936 (class 2606 OID 16520)
--- Name: appointment appointment_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.appointment
-    ADD CONSTRAINT appointment_pkey PRIMARY KEY (id);
-
-
---
--- TOC entry 4917 (class 2606 OID 16410)
--- Name: doctor doctor_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor
-    ADD CONSTRAINT doctor_pkey PRIMARY KEY (id);
-
-
---
--- TOC entry 4921 (class 2606 OID 16447)
--- Name: leave_day leave_day_doctor_id_date_key; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.leave_day
-    ADD CONSTRAINT leave_day_doctor_id_date_key UNIQUE (doctor_id, date);
-
-
---
--- TOC entry 4923 (class 2606 OID 16445)
--- Name: leave_day leave_day_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.leave_day
-    ADD CONSTRAINT leave_day_pkey PRIMARY KEY (id);
-
-
---
--- TOC entry 4942 (class 2606 OID 16585)
--- Name: otp_code otp_code_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.otp_code
-    ADD CONSTRAINT otp_code_pkey PRIMARY KEY (phone);
-
-
---
--- TOC entry 4925 (class 2606 OID 16465)
--- Name: patient patient_phone_key; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.patient
-    ADD CONSTRAINT patient_phone_key UNIQUE (phone);
-
-
---
--- TOC entry 4927 (class 2606 OID 16463)
--- Name: patient patient_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.patient
-    ADD CONSTRAINT patient_pkey PRIMARY KEY (id);
-
-
---
--- TOC entry 4938 (class 2606 OID 16549)
--- Name: queue_state queue_state_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.queue_state
-    ADD CONSTRAINT queue_state_pkey PRIMARY KEY (doctor_id, date);
-
-
---
--- TOC entry 4919 (class 2606 OID 16429)
--- Name: schedule_rule schedule_rule_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.schedule_rule
-    ADD CONSTRAINT schedule_rule_pkey PRIMARY KEY (id);
-
-
---
--- TOC entry 4944 (class 2606 OID 16593)
--- Name: setting setting_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.setting
-    ADD CONSTRAINT setting_pkey PRIMARY KEY (key);
-
-
---
--- TOC entry 4940 (class 2606 OID 16569)
--- Name: sms_message sms_message_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.sms_message
-    ADD CONSTRAINT sms_message_pkey PRIMARY KEY (id);
-
-
---
--- TOC entry 4915 (class 2606 OID 16399)
--- Name: specialty specialty_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.specialty
-    ADD CONSTRAINT specialty_pkey PRIMARY KEY (id);
-
-
---
--- TOC entry 4931 (class 2606 OID 16498)
--- Name: staff_user staff_user_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.staff_user
-    ADD CONSTRAINT staff_user_pkey PRIMARY KEY (id);
-
-
---
--- TOC entry 4933 (class 2606 OID 16500)
--- Name: staff_user staff_user_username_key; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.staff_user
-    ADD CONSTRAINT staff_user_username_key UNIQUE (username);
-
-
---
--- TOC entry 4929 (class 2606 OID 16474)
--- Name: triage_session triage_session_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.triage_session
-    ADD CONSTRAINT triage_session_pkey PRIMARY KEY (id);
-
-
---
--- TOC entry 4934 (class 1259 OID 16541)
--- Name: appointment_one_per_slot; Type: INDEX; Schema: public; Owner: postgres
---
-
-CREATE UNIQUE INDEX appointment_one_per_slot ON public.appointment USING btree (doctor_id, date, start_time) WHERE (status <> 'cancelled'::text);
-
-
---
--- TOC entry 4951 (class 2606 OID 16526)
--- Name: appointment appointment_doctor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.appointment
-    ADD CONSTRAINT appointment_doctor_id_fkey FOREIGN KEY (doctor_id) REFERENCES public.doctor(id);
-
-
---
--- TOC entry 4952 (class 2606 OID 16521)
--- Name: appointment appointment_patient_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.appointment
-    ADD CONSTRAINT appointment_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES public.patient(id);
-
-
---
--- TOC entry 4953 (class 2606 OID 16536)
--- Name: appointment appointment_rescheduled_from_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.appointment
-    ADD CONSTRAINT appointment_rescheduled_from_id_fkey FOREIGN KEY (rescheduled_from_id) REFERENCES public.appointment(id);
-
-
---
--- TOC entry 4954 (class 2606 OID 16531)
--- Name: appointment appointment_triage_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.appointment
-    ADD CONSTRAINT appointment_triage_id_fkey FOREIGN KEY (triage_id) REFERENCES public.triage_session(id);
-
-
---
--- TOC entry 4945 (class 2606 OID 16411)
--- Name: doctor doctor_specialty_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.doctor
-    ADD CONSTRAINT doctor_specialty_id_fkey FOREIGN KEY (specialty_id) REFERENCES public.specialty(id);
-
-
---
--- TOC entry 4947 (class 2606 OID 16448)
--- Name: leave_day leave_day_doctor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.leave_day
-    ADD CONSTRAINT leave_day_doctor_id_fkey FOREIGN KEY (doctor_id) REFERENCES public.doctor(id);
-
-
---
--- TOC entry 4955 (class 2606 OID 16550)
--- Name: queue_state queue_state_doctor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.queue_state
-    ADD CONSTRAINT queue_state_doctor_id_fkey FOREIGN KEY (doctor_id) REFERENCES public.doctor(id);
-
-
---
--- TOC entry 4956 (class 2606 OID 16555)
--- Name: queue_state queue_state_now_serving_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.queue_state
-    ADD CONSTRAINT queue_state_now_serving_id_fkey FOREIGN KEY (now_serving_id) REFERENCES public.appointment(id);
-
-
---
--- TOC entry 4946 (class 2606 OID 16430)
--- Name: schedule_rule schedule_rule_doctor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.schedule_rule
-    ADD CONSTRAINT schedule_rule_doctor_id_fkey FOREIGN KEY (doctor_id) REFERENCES public.doctor(id);
-
-
---
--- TOC entry 4957 (class 2606 OID 16570)
--- Name: sms_message sms_message_appointment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.sms_message
-    ADD CONSTRAINT sms_message_appointment_id_fkey FOREIGN KEY (appointment_id) REFERENCES public.appointment(id);
-
-
---
--- TOC entry 4950 (class 2606 OID 16501)
--- Name: staff_user staff_user_doctor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.staff_user
-    ADD CONSTRAINT staff_user_doctor_id_fkey FOREIGN KEY (doctor_id) REFERENCES public.doctor(id);
-
-
---
--- TOC entry 4948 (class 2606 OID 16475)
--- Name: triage_session triage_session_patient_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.triage_session
-    ADD CONSTRAINT triage_session_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES public.patient(id);
-
-
---
--- TOC entry 4949 (class 2606 OID 16480)
--- Name: triage_session triage_session_specialty_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.triage_session
-    ADD CONSTRAINT triage_session_specialty_id_fkey FOREIGN KEY (specialty_id) REFERENCES public.specialty(id);
-
-
--- Completed on 2026-11-21 20:50:00
-
---
--- PostgreSQL database dump complete
---
-
-\unrestrict bckeI0wDJ0fvEcEcSns7fmdkOfCoBmLqhoR9DL4xbrKkVSi72foKZdf1jA2PUTx
-
+CREATE TABLE IF NOT EXISTS user_session (
+  id text PRIMARY KEY,
+  kind text NOT NULL,
+  subject_id uuid,
+  phone text,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Slot locking: two patients can never hold or book the same doctor/date/start_time.
+CREATE UNIQUE INDEX IF NOT EXISTS appointment_one_per_slot
+  ON appointment (doctor_id, date, start_time)
+  WHERE status <> 'cancelled';
+
+-- Operational indexes from docs/design/data-model.md.
+CREATE INDEX IF NOT EXISTS idx_appointment_doctor_date_serial
+  ON appointment (doctor_id, date, serial);
+
+CREATE INDEX IF NOT EXISTS idx_appointment_patient_date
+  ON appointment (patient_id, date);
+
+CREATE INDEX IF NOT EXISTS idx_appointment_date_status
+  ON appointment (date, status);
+
+CREATE INDEX IF NOT EXISTS idx_triage_session_created_at
+  ON triage_session (created_at);
+
+CREATE INDEX IF NOT EXISTS idx_sms_message_sent_at
+  ON sms_message (sent_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_rule_doctor
+  ON schedule_rule (doctor_id, weekday, start_time);
+
+-- Clean existing rows for idempotent import
+TRUNCATE queue_state, sms_message, appointment, triage_session, leave_day, schedule_rule, staff_user, doctor, specialty, patient, otp_code, setting, user_session CASCADE;
+
+-- Specialties (14)
+INSERT INTO specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) VALUES ('medicine', 'Medicine', 'মেডিসিন', 'Fever, weakness, general health problems and first check-ups.', 'জ্বর, দুর্বলতা, সাধারণ স্বাস্থ্য সমস্যা ও প্রাথমিক পরীক্ষা।', 1, true);
+INSERT INTO specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) VALUES ('cardiology', 'Cardiology', 'হৃদরোগ', 'Heart problems, high blood pressure and palpitations.', 'হৃদযন্ত্রের সমস্যা, উচ্চ রক্তচাপ ও বুক ধড়ফড়।', 2, true);
+INSERT INTO specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) VALUES ('neurology', 'Neurology', 'স্নায়ুরোগ', 'Headache, migraine, dizziness, numbness and nerve problems.', 'মাথাব্যথা, মাইগ্রেন, মাথা ঘোরা, অবশ ভাব ও স্নায়ুর সমস্যা।', 3, true);
+INSERT INTO specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) VALUES ('gastroenterology', 'Gastroenterology & Liver', 'পরিপাকতন্ত্র ও লিভার', 'Stomach pain, acidity, diarrhoea, constipation, jaundice and liver problems.', 'পেট ব্যথা, গ্যাস্ট্রিক, ডায়রিয়া, কোষ্ঠকাঠিন্য, জন্ডিস ও লিভারের সমস্যা।', 4, true);
+INSERT INTO specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) VALUES ('orthopedics', 'Orthopaedics', 'অর্থোপেডিক্স', 'Bone, joint, back and neck pain, fractures and injuries.', 'হাড়, জোড়া, কোমর ও ঘাড়ের ব্যথা, হাড় ভাঙা ও আঘাত।', 5, true);
+INSERT INTO specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) VALUES ('gynecology', 'Gynaecology & Obstetrics', 'স্ত্রীরোগ ও প্রসূতি', 'Periods, pregnancy and women''s health.', 'মাসিক, গর্ভাবস্থা ও নারীস্বাস্থ্য।', 6, true);
+INSERT INTO specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) VALUES ('pediatrics', 'Paediatrics', 'শিশুরোগ', 'Health problems of babies and children.', 'নবজাতক ও শিশুদের স্বাস্থ্য সমস্যা।', 7, true);
+INSERT INTO specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) VALUES ('ent', 'ENT (Ear, Nose & Throat)', 'নাক, কান ও গলা', 'Ear pain, hearing loss, sinus, tonsils and throat problems.', 'কানে ব্যথা, কম শোনা, সাইনাস, টনসিল ও গলার সমস্যা।', 8, true);
+INSERT INTO specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) VALUES ('dermatology', 'Dermatology', 'চর্মরোগ', 'Skin rashes, itching, acne, allergies and hair loss.', 'চামড়ায় ফুসকুড়ি, চুলকানি, ব্রণ, এলার্জি ও চুল পড়া।', 9, true);
+INSERT INTO specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) VALUES ('respiratory', 'Respiratory Medicine', 'বক্ষব্যাধি', 'Long-lasting cough, asthma, wheezing and lung problems.', 'দীর্ঘদিনের কাশি, হাঁপানি, বুকে সাঁই সাঁই শব্দ ও ফুসফুসের সমস্যা।', 10, true);
+INSERT INTO specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) VALUES ('endocrinology', 'Diabetes & Endocrinology', 'ডায়াবেটিস ও হরমোন', 'Diabetes, thyroid and hormone problems.', 'ডায়াবেটিস, থাইরয়েড ও হরমোনের সমস্যা।', 11, true);
+INSERT INTO specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) VALUES ('ophthalmology', 'Eye (Ophthalmology)', 'চক্ষু', 'Eye pain, redness and blurred vision.', 'চোখে ব্যথা, চোখ লাল হওয়া ও ঝাপসা দেখা।', 12, true);
+INSERT INTO specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) VALUES ('psychiatry', 'Psychiatry', 'মানসিক স্বাস্থ্য', 'Anxiety, low mood, sleep problems and stress.', 'দুশ্চিন্তা, মন খারাপ, ঘুমের সমস্যা ও মানসিক চাপ।', 13, true);
+INSERT INTO specialty (id, name_en, name_bn, description_en, description_bn, sort_order, active) VALUES ('urology', 'Kidney & Urology', 'কিডনি ও মূত্ররোগ', 'Burning urine, kidney stones and prostate problems.', 'প্রস্রাবে জ্বালাপোড়া, কিডনিতে পাথর ও প্রোস্টেটের সমস্যা।', 14, true);
+
+-- Doctors (22) and Schedule Rules
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('d754a2c1-c48b-4163-af33-b533dc3995b7', 'Dr. Mahmudul Hasan', 'ডা. মাহমুদুল হাসান', 'medicine', 'Senior Consultant, Medicine', 'সিনিয়র কনসালট্যান্ট, মেডিসিন', 'MBBS, FCPS (Medicine)', 18, 1000, 'male', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('9f3e6ca4-f34c-4b8f-a28e-65f500262ea9', 'd754a2c1-c48b-4163-af33-b533dc3995b7', 0, '17:00', '21:00', 12, 20, 'Room 101');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('a0a62f54-20af-45c0-8740-052d28b4c741', 'd754a2c1-c48b-4163-af33-b533dc3995b7', 2, '17:00', '21:00', 12, 20, 'Room 101');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('074b4d2a-8f2f-4a23-b218-a10d92ed15a6', 'd754a2c1-c48b-4163-af33-b533dc3995b7', 4, '17:00', '21:00', 12, 20, 'Room 101');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('63411d81-e8d1-45c2-941e-a6c8062b0d95', 'Dr. Sharmin Akter', 'ডা. শারমিন আক্তার', 'medicine', 'Consultant, Medicine', 'কনসালট্যান্ট, মেডিসিন', 'MBBS, FCPS (Medicine)', 9, 800, 'female', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('997e7537-73f1-4ca4-b78f-7a4567ab2e24', '63411d81-e8d1-45c2-941e-a6c8062b0d95', 6, '10:00', '13:00', 10, 18, 'Room 102');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('5017f909-604d-471f-82d0-98efa050c657', '63411d81-e8d1-45c2-941e-a6c8062b0d95', 1, '10:00', '13:00', 10, 18, 'Room 102');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('ab266bb5-42bc-40e7-be54-0bfd3d28da87', '63411d81-e8d1-45c2-941e-a6c8062b0d95', 3, '10:00', '13:00', 10, 18, 'Room 102');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('1df430f6-e02f-4bdb-86bd-e4a833c8344a', 'Dr. Arifur Rahman', 'ডা. আরিফুর রহমান', 'medicine', 'Consultant, Medicine', 'কনসালট্যান্ট, মেডিসিন', 'MBBS, MD (Internal Medicine)', 10, 900, 'male', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('92a9a7e0-1d28-42f9-9f55-f7f4f79d46f0', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', 6, '17:00', '21:00', 12, 20, 'Room 103');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('282eb963-0a7d-4552-b3b5-e66576dc331f', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', 1, '17:00', '21:00', 12, 20, 'Room 103');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('933f6aa7-6716-484f-b1af-805bf6a895cd', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', 3, '17:00', '21:00', 12, 20, 'Room 103');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', 'Dr. Rezaul Karim', 'ডা. রেজাউল করিম', 'cardiology', 'Senior Consultant, Cardiology', 'সিনিয়র কনসালট্যান্ট, হৃদরোগ', 'MBBS, MD (Cardiology)', 22, 1500, 'male', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('21c97431-46af-4169-9355-3bab3554ec17', '190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', 6, '18:00', '21:00', 15, 12, 'Room 201');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('301e5933-86ea-4497-8b8d-22f944b4d197', '190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', 1, '18:00', '21:00', 15, 12, 'Room 201');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('8c5a3f23-7f94-4264-93b9-e676481cad10', '190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', 3, '18:00', '21:00', 15, 12, 'Room 201');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('cde5c4ba-9ee8-48b3-853b-6060216dc72f', 'Dr. Nadia Islam', 'ডা. নাদিয়া ইসলাম', 'cardiology', 'Consultant, Cardiology', 'কনসালট্যান্ট, হৃদরোগ', 'MBBS, MD (Cardiology)', 11, 1200, 'female', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('a56771fa-8138-419c-a033-43260392e552', 'cde5c4ba-9ee8-48b3-853b-6060216dc72f', 0, '10:00', '13:00', 15, 12, 'Room 202');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('2c1af227-e16e-4efe-8f7c-2c6249188dce', 'cde5c4ba-9ee8-48b3-853b-6060216dc72f', 2, '10:00', '13:00', 15, 12, 'Room 202');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('57dbcfce-ad0e-4c98-8d2f-78b26ae72471', 'Dr. Anisur Rahman', 'ডা. আনিসুর রহমান', 'neurology', 'Consultant, Neurology', 'কনসালট্যান্ট, স্নায়ুরোগ', 'MBBS, MD (Neurology)', 14, 1200, 'male', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('de29f499-bd94-415c-af4d-c937bdcef6e8', '57dbcfce-ad0e-4c98-8d2f-78b26ae72471', 0, '17:00', '20:00', 15, 12, 'Room 203');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('24487732-45e9-49fe-b665-99f806b0595f', '57dbcfce-ad0e-4c98-8d2f-78b26ae72471', 3, '17:00', '20:00', 15, 12, 'Room 203');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('a7973606-e277-411f-a0c3-94f66f76067c', 'Dr. Lubna Yasmin', 'ডা. লুবনা ইয়াসমিন', 'neurology', 'Associate Consultant, Neurology', 'অ্যাসোসিয়েট কনসালট্যান্ট, স্নায়ুরোগ', 'MBBS, MD (Neurology)', 7, 1000, 'female', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('11a0270e-5b6e-4c09-ab73-6d334adcdf39', 'a7973606-e277-411f-a0c3-94f66f76067c', 6, '10:00', '13:00', 15, 12, 'Room 204');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('6dfe1a4d-8e6a-48e3-b7cc-7ee31cfd1114', 'a7973606-e277-411f-a0c3-94f66f76067c', 1, '10:00', '13:00', 15, 12, 'Room 204');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('6e33331d-c111-4e1f-90e7-5edce5f2c513', 'Dr. Tanvir Hasan', 'ডা. তানভীর হাসান', 'gastroenterology', 'Consultant, Gastroenterology & Liver', 'কনসালট্যান্ট, পরিপাকতন্ত্র ও লিভার', 'MBBS, MD (Gastroenterology)', 12, 1000, 'male', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('20a6121b-6359-476f-aedc-725c8025271c', '6e33331d-c111-4e1f-90e7-5edce5f2c513', 6, '17:30', '20:30', 12, 15, 'Room 301');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('e3ae976f-75e2-44b8-9cff-547f4a1c3124', '6e33331d-c111-4e1f-90e7-5edce5f2c513', 1, '17:30', '20:30', 12, 15, 'Room 301');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('ec226236-ddf9-475a-af01-8e263fb9a63e', '6e33331d-c111-4e1f-90e7-5edce5f2c513', 4, '17:30', '20:30', 12, 15, 'Room 301');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('bc106e48-7b3a-40d6-99ab-61cbaf877c72', '6e33331d-c111-4e1f-90e7-5edce5f2c513', 4, '10:00', '12:00', 12, 10, 'Room 301');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('937766e2-c060-4f5a-8923-48d5ece2bce7', 'Dr. Farzana Chowdhury', 'ডা. ফারজানা চৌধুরী', 'gastroenterology', 'Associate Consultant, Gastroenterology & Liver', 'অ্যাসোসিয়েট কনসালট্যান্ট, পরিপাকতন্ত্র ও লিভার', 'MBBS, FCPS (Medicine), MD (Gastroenterology)', 8, 900, 'female', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('b7e617a8-bf3a-4154-b518-0c9e34852eec', '937766e2-c060-4f5a-8923-48d5ece2bce7', 0, '10:00', '12:30', 10, 15, 'Room 302');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('c9ad70ac-5cb5-45b2-9b5a-cc0d09082ca8', '937766e2-c060-4f5a-8923-48d5ece2bce7', 2, '10:00', '12:30', 10, 15, 'Room 302');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('449686b1-9efa-4db4-8a4f-476934c3bf6b', 'Dr. Kamrul Islam', 'ডা. কামরুল ইসলাম', 'orthopedics', 'Senior Consultant, Orthopaedics', 'সিনিয়র কনসালট্যান্ট, অর্থোপেডিক্স', 'MBBS, MS (Orthopaedics)', 20, 1200, 'male', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('b7f9287c-7003-48cb-8fbe-d828459e9a4f', '449686b1-9efa-4db4-8a4f-476934c3bf6b', 6, '16:00', '20:00', 15, 16, 'Room 303');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('7b129bd2-66fb-401d-ab10-f5482629e98b', '449686b1-9efa-4db4-8a4f-476934c3bf6b', 2, '16:00', '20:00', 15, 16, 'Room 303');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('9d4aad6c-5067-4366-a488-2116b917a1d2', '449686b1-9efa-4db4-8a4f-476934c3bf6b', 4, '16:00', '20:00', 15, 16, 'Room 303');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('e8d25b68-340a-43f7-a9eb-a81eb23f6868', 'Dr. Sabrina Haque', 'ডা. সাবরিনা হক', 'orthopedics', 'Consultant, Orthopaedics', 'কনসালট্যান্ট, অর্থোপেডিক্স', 'MBBS, MS (Orthopaedics)', 7, 1000, 'female', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('48386944-9311-4de2-a240-bbd266cbf97d', 'e8d25b68-340a-43f7-a9eb-a81eb23f6868', 1, '10:30', '13:00', 15, 10, 'Room 304');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('373a8c0e-d502-4bbf-8f01-a348ef2ba169', 'e8d25b68-340a-43f7-a9eb-a81eb23f6868', 3, '10:30', '13:00', 15, 10, 'Room 304');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('361db253-7907-49bb-b6ad-52fc4f651516', 'Dr. Rokeya Begum', 'ডা. রোকেয়া বেগম', 'gynecology', 'Senior Consultant, Gynaecology & Obstetrics', 'সিনিয়র কনসালট্যান্ট, স্ত্রীরোগ ও প্রসূতি', 'MBBS, FCPS (Gynae & Obs)', 21, 1200, 'female', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('9b652fc1-62db-474a-889d-3cc1ae79ab59', '361db253-7907-49bb-b6ad-52fc4f651516', 6, '16:00', '20:00', 12, 20, 'Room 401');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('536897a5-754c-4327-9d8e-67f35214ffbf', '361db253-7907-49bb-b6ad-52fc4f651516', 1, '16:00', '20:00', 12, 20, 'Room 401');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('ccf1f30b-16e7-4173-bbab-dda08c1628f1', '361db253-7907-49bb-b6ad-52fc4f651516', 3, '16:00', '20:00', 12, 20, 'Room 401');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('153661fe-dc6d-40dc-ada0-53fdcdaa4965', 'Dr. Tahmina Ahmed', 'ডা. তাহমিনা আহমেদ', 'gynecology', 'Consultant, Gynaecology & Obstetrics', 'কনসালট্যান্ট, স্ত্রীরোগ ও প্রসূতি', 'MBBS, FCPS (Gynae & Obs)', 10, 1000, 'female', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('513a5298-3368-4e49-a704-b52fae65ae05', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', 0, '10:00', '13:00', 12, 15, 'Room 402');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('44febe90-c7f9-4fbb-a454-0d245b815a62', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', 2, '10:00', '13:00', 12, 15, 'Room 402');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('ebd8cafe-9a9e-4dd3-af78-9bd776519b63', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', 4, '10:00', '13:00', 12, 15, 'Room 402');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('324b840d-1cc8-4775-aa9a-895634368637', 'Dr. Shafiqul Alam', 'ডা. শফিকুল আলম', 'pediatrics', 'Senior Consultant, Paediatrics', 'সিনিয়র কনসালট্যান্ট, শিশুরোগ', 'MBBS, FCPS (Paediatrics)', 16, 1000, 'male', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('f0bf7784-da70-4dba-a2eb-4fabbeff9460', '324b840d-1cc8-4775-aa9a-895634368637', 6, '17:00', '20:00', 10, 18, 'Room 403');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('52f5421b-8889-4624-a1cd-c18445da3d53', '324b840d-1cc8-4775-aa9a-895634368637', 0, '17:00', '20:00', 10, 18, 'Room 403');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('9021c67b-3b16-48db-9f96-7c826214ec51', '324b840d-1cc8-4775-aa9a-895634368637', 2, '17:00', '20:00', 10, 18, 'Room 403');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('12720840-e006-4bdd-976a-cb0bd05dcfce', '324b840d-1cc8-4775-aa9a-895634368637', 4, '17:00', '20:00', 10, 18, 'Room 403');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', 'Dr. Ishrat Jahan', 'ডা. ইশরাত জাহান', 'pediatrics', 'Consultant, Paediatrics', 'কনসালট্যান্ট, শিশুরোগ', 'MBBS, DCH, FCPS (Paediatrics)', 9, 900, 'female', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('a843abf9-93f0-4a2a-b0eb-704471d142e4', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', 1, '10:00', '13:00', 10, 18, 'Room 404');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('bd663342-3629-4585-bfd6-392e0242336d', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', 3, '10:00', '13:00', 10, 18, 'Room 404');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('044f6914-db23-4c7a-8a51-c59a76c874e6', 'Dr. Abdul Mannan', 'ডা. আবদুল মান্নান', 'ent', 'Consultant, ENT (Ear, Nose & Throat)', 'কনসালট্যান্ট, নাক, কান ও গলা', 'MBBS, DLO, FCPS (ENT)', 15, 1000, 'male', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('0c1b70f2-d703-421a-a50d-52be1e3969aa', '044f6914-db23-4c7a-8a51-c59a76c874e6', 0, '17:00', '20:00', 12, 15, 'Room 501');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('088cb029-16a9-48fd-9ff4-71b4d4b2c97e', '044f6914-db23-4c7a-8a51-c59a76c874e6', 2, '17:00', '20:00', 12, 15, 'Room 501');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('9657c47d-17e9-4d75-91d3-886537553601', '044f6914-db23-4c7a-8a51-c59a76c874e6', 4, '17:00', '20:00', 12, 15, 'Room 501');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('934d9e7d-7a3e-447a-b995-631ffb3b5e88', 'Dr. Sumaiya Rahman', 'ডা. সুমাইয়া রহমান', 'dermatology', 'Consultant, Dermatology', 'কনসালট্যান্ট, চর্মরোগ', 'MBBS, DDV, FCPS (Dermatology)', 8, 1000, 'female', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('5f96d2e9-7a37-440f-b68f-fddf99c448c5', '934d9e7d-7a3e-447a-b995-631ffb3b5e88', 6, '17:00', '20:00', 10, 18, 'Room 502');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('caf61dea-461c-4e26-ac1a-f99b02ae530a', '934d9e7d-7a3e-447a-b995-631ffb3b5e88', 1, '17:00', '20:00', 10, 18, 'Room 502');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('a2ccc675-92db-447a-9ac8-cc2c3a11ec9b', '934d9e7d-7a3e-447a-b995-631ffb3b5e88', 3, '17:00', '20:00', 10, 18, 'Room 502');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('8f652753-cdde-4c22-993a-26b8bba0fa74', 'Dr. Mizanur Rahman', 'ডা. মিজানুর রহমান', 'respiratory', 'Senior Consultant, Respiratory Medicine', 'সিনিয়র কনসালট্যান্ট, বক্ষব্যাধি', 'MBBS, FCPS (Medicine), MD (Chest)', 19, 1200, 'male', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('939636c0-c336-4b78-b48c-2265c3af70a5', '8f652753-cdde-4c22-993a-26b8bba0fa74', 0, '17:00', '20:00', 15, 12, 'Room 503');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('08e548ea-e4b4-4072-88f9-74b07b08b95e', '8f652753-cdde-4c22-993a-26b8bba0fa74', 3, '17:00', '20:00', 15, 12, 'Room 503');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('29043842-761d-4848-8db4-9790e81d243b', 'Dr. Shahana Parvin', 'ডা. শাহানা পারভীন', 'endocrinology', 'Consultant, Diabetes & Endocrinology', 'কনসালট্যান্ট, ডায়াবেটিস ও হরমোন', 'MBBS, MD (Endocrinology)', 13, 1200, 'female', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('758c9a7e-8109-41b3-9342-16dbfa2bd7a1', '29043842-761d-4848-8db4-9790e81d243b', 6, '10:00', '13:00', 15, 12, 'Room 504');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('4f2b3452-4439-440d-87e2-09bee0a99571', '29043842-761d-4848-8db4-9790e81d243b', 2, '10:00', '13:00', 15, 12, 'Room 504');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('d345e105-e0b0-414d-bf90-52196522b42d', '29043842-761d-4848-8db4-9790e81d243b', 4, '10:00', '13:00', 15, 12, 'Room 504');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', 'Dr. Jahangir Alam', 'ডা. জাহাঙ্গীর আলম', 'ophthalmology', 'Consultant, Eye (Ophthalmology)', 'কনসালট্যান্ট, চক্ষু', 'MBBS, FCPS (Ophthalmology)', 17, 900, 'male', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('7d53c5ea-d53b-48c0-ad35-57a06ac3067b', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', 6, '16:00', '19:00', 10, 18, 'Room 601');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('20758228-9d47-4ca0-8113-8c1b5023d60a', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', 1, '16:00', '19:00', 10, 18, 'Room 601');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('b438958b-3ffc-478f-9a9d-3a147fd2dd1e', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', 3, '16:00', '19:00', 10, 18, 'Room 601');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('9a93720c-fd67-41fa-b34c-cb22844a0b46', 'Dr. Rafiqul Islam', 'ডা. রফিকুল ইসলাম', 'psychiatry', 'Consultant, Psychiatry', 'কনসালট্যান্ট, মানসিক স্বাস্থ্য', 'MBBS, FCPS (Psychiatry)', 12, 1200, 'male', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('146ece44-8b8f-435c-a8fb-4418def8341b', '9a93720c-fd67-41fa-b34c-cb22844a0b46', 2, '17:00', '20:00', 20, 9, 'Room 602');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('e2c5542a-1f89-4ba6-a6dd-3af81e203cc7', '9a93720c-fd67-41fa-b34c-cb22844a0b46', 4, '17:00', '20:00', 20, 9, 'Room 602');
+INSERT INTO doctor (id, name_en, name_bn, specialty_id, designation_en, designation_bn, qualifications, experience_years, fee, gender, active) VALUES ('6cb7ff7e-94fa-4242-9469-5ae23b900dfe', 'Dr. Moinul Hossain', 'ডা. মঈনুল হোসেন', 'urology', 'Consultant, Kidney & Urology', 'কনসালট্যান্ট, কিডনি ও মূত্ররোগ', 'MBBS, MS (Urology)', 14, 1200, 'male', true);
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('bfcdc953-4a72-4cdf-880c-eee1238f6b50', '6cb7ff7e-94fa-4242-9469-5ae23b900dfe', 0, '18:00', '21:00', 15, 12, 'Room 603');
+INSERT INTO schedule_rule (id, doctor_id, weekday, start_time, end_time, slot_minutes, max_patients, room) VALUES ('1144964f-683e-4785-9164-ef47d7d7d3bb', '6cb7ff7e-94fa-4242-9469-5ae23b900dfe', 3, '18:00', '21:00', 15, 12, 'Room 603');
+
+-- Leave Days (4)
+INSERT INTO leave_day (id, doctor_id, date, reason) VALUES ('98b76722-2e7c-4477-b3a5-5e69bd295ba1', '190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', '2026-10-12', 'Conference');
+INSERT INTO leave_day (id, doctor_id, date, reason) VALUES ('beed8bed-f363-4186-9b94-995df3a70c67', '449686b1-9efa-4db4-8a4f-476934c3bf6b', '2026-11-03', 'Personal');
+INSERT INTO leave_day (id, doctor_id, date, reason) VALUES ('b5eca6a3-8d39-4b7e-bf05-0dcb60859823', '57dbcfce-ad0e-4c98-8d2f-78b26ae72471', '2026-11-29', 'Conference abroad');
+INSERT INTO leave_day (id, doctor_id, date, reason) VALUES ('eae4fb8f-d3b5-4993-9f29-da560cd5d510', '934d9e7d-7a3e-447a-b995-631ffb3b5e88', '2026-11-30', 'Personal');
+
+-- Patients (100)
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('ce27dada-6029-4332-9839-562dc3401de9', 'Mahmud Sheikh', '01723838892', 40, 'male', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('08c08bf3-ca0c-4ccf-b67d-4c42a939d31a', 'Sumi Khatun', '01724867282', 60, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('be9a2331-cfc4-4be3-8812-13b93b85f8c2', 'Salma Begum', '01584190577', 38, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('b98fd7c9-40d8-4852-81ea-46fa7d073e6e', 'Sumi Islam', '01899048498', 59, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('3bd6a7a1-13d8-4a89-9dd2-c144da1014a5', 'Babul Islam', '01620302559', 58, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('b4fad5d8-e32a-422b-9619-0cd718d096e8', 'Arif Sarker', '01986192656', 22, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('78434abb-47c8-4fc8-b73b-586f43ed7738', 'Arif Islam', '01651211377', 73, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('fdf67440-b118-4b31-b65c-38feac807cbb', 'Rina Siddiqui', '01396596798', 63, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('0bf35f8a-6795-443c-916d-ca9fc8496882', 'শাহানা খাতুন', '01440134850', 74, 'female', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('f34c1b22-e657-459a-9c02-4e39b61ca0e1', 'Shirin Khan', '01923549070', 24, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('9c76e7ab-d8ab-4106-a04b-b68751eac0ad', 'Imran Khan', '01675397524', 48, 'male', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('40c4b112-9dc1-438b-89b4-a5ba30eba8b3', 'Parvin Roy', '01899982825', 8, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('60b0db75-9502-4172-922f-857ffe1ba292', 'Sumaiya Rahman', '01945491016', 71, 'female', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('e1bb6c96-e517-4419-b09d-82d24c760df4', 'Lima Khatun', '01376033059', 43, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('18531fb0-975d-49a9-902c-494c10439df0', 'Rina Begum', '01671265488', 63, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('7ae76e07-b643-492f-8267-78d86ca0b9ee', 'Sohel Roy', '01577854013', 72, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('2e57e115-856e-45db-b73a-0bbdf518e360', 'Rakib Siddiqui', '01743272558', 31, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('a53aafb7-cd70-4b68-9d29-d1ba2c72fd25', 'Dilruba Miah', '01730661806', 45, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('f10a64dc-530a-447a-b6be-926ea3b7a4ba', 'Tania Khan', '01921050931', 29, 'female', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('a6bbcc23-a745-4694-bf5e-e05ba9f646b8', 'শাহানা খাতুন', '01392351825', 58, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('7e6f3489-de55-441f-87b2-c9f535c939e3', 'Sadia Talukder', '01715035940', 19, 'female', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('04d4089b-42d5-4cb4-8a4f-bc0f6d28e2da', 'Nayeem Islam', '01845980788', 24, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('3a996823-3d85-47c8-add9-af5370163c73', 'Fahim Talukder', '01443240411', 4, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('058c61d2-eb77-46a0-99d2-3d0bb2729b45', 'Tania Miah', '01354784056', 63, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('c0545013-833a-4cac-b756-ac8310e51ee3', 'Shafiq Miah', '01784762614', 20, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('4a520e73-c859-4ff6-85a9-70105daead83', 'Karim Uddin', '01330490969', 8, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('2ca5bae2-8af3-4a25-8704-6c8df81081ff', 'Kulsum Akter', '01380017258', 10, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('0ccf4637-52f0-48be-9f6c-2b959b955cc2', 'Shapla Talukder', '01529128416', 63, 'female', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('0fc2ada7-87c1-48f9-badc-5280909baa9f', 'Mim Biswas', '01514131979', 10, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('91aba9ad-ba8f-4ac3-8173-368c9c1da44b', 'Dilruba Chowdhury', '01428291945', 22, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('4c6a39c2-67e1-4ecd-8ce2-242df82137ba', 'Rahim Chowdhury', '01762147267', 49, 'male', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('447b9eb5-4615-424f-8b62-cf91711d4fdd', 'Imran Biswas', '01445539907', 2, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('339e30a1-0023-4663-b556-7dca67367e8f', 'নাসিমা আক্তার', '01551923891', 27, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('d3c32d1a-5eec-4d25-a18e-fafb4efbb30d', 'Kulsum Roy', '01960923328', 65, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('06be4f9c-7e86-4d1c-9052-aa5ac0c30bf1', 'Kulsum Das', '01710021795', 9, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('cd4d3cb9-d375-455c-a633-72f235212b75', 'Sumaiya Ahmed', '01346508915', 20, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('56ebd162-30ad-47a0-952f-a975c90712ad', 'Ayesha Rahman', '01316480469', 45, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('2cc2a4bc-eb02-4b32-83c5-124a73004b1f', 'Sadia Siddiqui', '01886096599', 19, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('5a061fc9-b0f3-47a3-a623-feae44084767', 'Karim Sarker', '01383239756', 41, 'male', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('4b6a73d8-1276-4257-a9ae-abdf83eede10', 'Arif Roy', '01689542404', 52, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('f58cc255-0ccf-44bc-a5ef-0cb126bb5438', 'Zahid Sheikh', '01338034235', 30, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('ac098341-eb9f-411e-b8d5-bab91f031533', 'Shirin Sarker', '01437914745', 28, 'female', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('787c47d8-c233-4b81-916f-98c17a546362', 'Salma Roy', '01721564111', 9, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('b9ba2820-575b-455b-b793-d56e9284827b', 'Rakib Islam', '01688113375', 46, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('ab279882-d03b-49f6-8a41-ec3ebc5dfaa9', 'Shafiq Miah', '01645191258', 4, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('0dd817c7-12b9-4b2f-9f84-6034cf61275b', 'Faisal Roy', '01495170365', 36, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('d9dd994c-5932-4a48-8349-63f8f01718ce', 'আবুল কালাম', '01479440160', 53, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('cbdb7fd4-324a-4498-9783-903beb64319c', 'Mim Rahman', '01417958399', 2, 'female', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('7536f1db-4016-4192-a129-4a64283e92e6', 'Rokeya Islam', '01362686025', 51, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('6cc929d0-222c-4486-a0fe-dd72e2162033', 'Arif Roy', '01439536855', 64, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('63270b4f-f4c1-4392-9267-5ad558754fca', 'Parvin Biswas', '01360541490', 3, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('5873964f-1883-41ae-8729-c015f0f56907', 'শাহানা খাতুন', '01752019995', 33, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('370bf7a0-4d7e-4c00-baa9-163db26cda10', 'Sadia Sheikh', '01834133494', 74, 'female', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('84ac9969-8bdd-4ab4-83a2-5f13ade2e838', 'রাবেয়া খাতুন', '01867998138', 74, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('8c5728d0-91f3-469b-b67c-bfb007b892e6', 'Nasrin Hossain', '01896104378', 39, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('fc3307d4-2e4c-4d69-a343-d46751ce31e9', 'Fatema Chowdhury', '01380233446', 39, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('90f63dda-938e-450a-a040-33d2c0590b47', 'Mahmud Miah', '01675516220', 9, 'male', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('038656ce-769c-41b0-af93-69db2307756a', 'Masud Sarker', '01684164620', 76, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('3b2204b2-947b-411e-a52e-941e6ca2eb9e', 'Nasrin Das', '01455072569', 23, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('6c2cd65e-e3d4-4472-bb94-376ffaf10385', 'আবুল কালাম', '01666469363', 78, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('de537813-68e4-4394-9c10-2ae8d9fef2b8', 'Tariq Uddin', '01720947688', 51, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('0a06e5f9-b54e-41ca-a856-8556bd3ddebf', 'Dilruba Islam', '01926906698', 67, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('aec222e6-aa05-44b1-834f-082242492f95', 'Rumana Talukder', '01424260901', 12, 'female', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('47704834-9390-4f76-bfb5-c590c075524a', 'Faisal Islam', '01380629501', 48, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('17462f3b-1948-4d43-9a22-3f44a855c382', 'রহিম উদ্দিন', '01946087011', 57, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('36a6d323-736c-478e-9fa6-91982e442809', 'Mim Akter', '01679657817', 71, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('0459c27e-fcfd-4d8f-9326-2f91e6531ad8', 'Dilruba Islam', '01377208111', 49, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('dd081c10-ef07-4ebd-9758-23c70d86ae9f', 'Shafiq Chowdhury', '01788727769', 43, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('2be32e0d-a2af-42a3-ae96-f4fee9073830', 'Ayesha Biswas', '01460357338', 38, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('38b3ea1a-7c3c-4c56-acb1-dc62d519ab99', 'Kulsum Khatun', '01881074483', 20, 'female', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('e55e51f5-e403-42ed-ba4d-29a4826af815', 'Rumana Talukder', '01530614993', 40, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('e587389b-864b-46f0-98b7-45ab8f1e0255', 'Zahid Talukder', '01698811527', 36, 'male', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('79b2baa7-843a-4882-8028-bafe8d65b7fb', 'জসিম মিয়া', '01997687128', 9, 'male', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('f5ae2167-bf4c-4983-805c-bc57b1c80890', 'Faisal Sarker', '01879806190', 22, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('7458ebe6-f9d8-4b5e-a8f1-6fcd44ac59a7', 'Kulsum Hossain', '01799320809', 73, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('8e5b42b0-54fc-49e2-b4c1-84ce27b15f8d', 'Moushumi Roy', '01413946741', 14, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('4c9c6594-9f6a-4ac5-a566-2d9eefc780e8', 'Jamal Talukder', '01833593668', 10, 'male', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('921e29e7-4f55-4dda-81be-334126e79377', 'Kamal Biswas', '01428455688', 61, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('d537e3c1-68b9-4cea-9cd0-dfd2ea1fa061', 'Nasrin Islam', '01325798113', 34, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('87954318-9acb-4272-a29b-c8c3c95f0a42', 'Rokeya Sheikh', '01300740452', 74, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('f4914912-3ce1-41b9-bd24-e2dbf85b0a32', 'Rumana Biswas', '01653314567', 36, 'female', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('20fc0210-19e1-455a-8900-122cfc3133f4', 'Kulsum Mondal', '01386516104', 39, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('8dc45f6f-d1db-4c02-8299-8ad07e22461e', 'Sadia Khatun', '01920093089', 60, 'female', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('4ef7cf1b-c4a3-4f4b-bd1b-4c8d6cfcc87b', 'Jamal Sarker', '01666282563', 58, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('d759e7a6-84f8-4500-84c5-3d943e0e0741', 'Rokeya Sheikh', '01549426130', 57, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('f2204fde-2b8e-4280-9ca0-90f6af73de45', 'Moushumi Das', '01659964560', 56, 'female', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('505bc95d-8fc9-496d-8f50-321d1575c814', 'Shapla Ahmed', '01570306879', 8, 'female', 'front_desk', NULL);
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('7aecad99-e228-46a9-8bc7-26ea03783633', 'Jannat Uddin', '01691754642', 13, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('5e799ed3-16d8-401d-b1c8-76336013c787', 'Mizan Miah', '01452719954', 41, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('e880057b-7e1b-495c-8253-a2b066049a61', 'Moushumi Hossain', '01540393160', 73, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('7c28a20f-42bb-4c13-a9bf-df4a7bd66c40', 'Rahim Ahmed', '01497990937', 3, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('a05a8e2a-deb0-4992-8620-4e2d8b9b5c3b', 'Nasima Uddin', '01719764028', 20, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('5d89d1cf-9409-4010-87bb-61cad505855b', 'Ayesha Khan', '01677941719', 35, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('eb8ee420-1dcd-443e-8ba6-747063076c4a', 'Fahim Islam', '01581043693', 19, 'male', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('88fb6134-3337-4fac-8fc3-444e339a952c', 'Sumaiya Roy', '01545889903', 9, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('86c9276c-684b-479b-947b-6607b6d86c71', 'Sumi Mondal', '01873347513', 20, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('a69c803c-7a93-4d46-a68b-6346c8e26384', 'Mim Das', '01585241055', 31, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('95b7fa03-ec69-4e0e-a56e-240ca9594ccb', 'Rumana Rahman', '01484316594', 67, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('514ae1ac-f21a-4c5d-91b9-ac7412a23783', 'Dilruba Biswas', '01302984865', 43, 'female', 'self', '2026-11-21T12:10:00.000Z');
+INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at) VALUES ('d9552cab-bc75-457f-a968-889795cfa1cc', 'Nayeem Das', '01336963332', 57, 'male', 'self', '2026-11-21T12:10:00.000Z');
+
+-- Triage Sessions (120)
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('959d7d9b-5066-4fe3-a6a9-84485618508c', 'f10a64dc-530a-447a-b6be-926ea3b7a4ba', 'bn', 'তিন দিন ধরে জ্বর আর শরীর ব্যথা', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'medicine', 'within_48h', 'আপনি জ্বর ও শরীর ব্যথা-এর কথা বলেছেন। এ ধরনের সমস্যা মেডিসিন বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['fever', 'body_ache']::text[], NULL, '{"symptoms":"fever and body ache","duration":"তিন দিন","severity":"severe","note":"তিন দিন ধরে জ্বর আর শরীর ব্যথা / খুব বেশি"}'::jsonb, '2026-08-23T05:34:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('bd0636f7-e22a-4464-a6e5-bc9218cc1ee4', '370bf7a0-4d7e-4c00-baa9-163db26cda10', 'en', 'My blood pressure is high and I get palpitations', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'cardiology', 'routine', 'You mentioned high blood pressure and palpitations. Cardiology doctors treat these problems, so that is the right place to start.', ARRAY['high_bp', 'palpitations']::text[], NULL, '{"symptoms":"high blood pressure and palpitations","duration":"since today","severity":"moderate","note":"My blood pressure is high and I get palpitations / Since today / Moderate"}'::jsonb, '2026-08-23T08:41:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('96e1b88d-d63b-4799-8f75-1ef1d4e4f274', '56ebd162-30ad-47a0-952f-a975c90712ad', 'en', 'My blood pressure is high and I get palpitations', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'cardiology', 'routine', 'You mentioned high blood pressure and palpitations. Cardiology doctors treat these problems, so that is the right place to start.', ARRAY['high_bp', 'palpitations']::text[], NULL, '{"symptoms":"high blood pressure and palpitations","duration":"since today","severity":"mild","note":"My blood pressure is high and I get palpitations / Since today / Mild"}'::jsonb, '2026-08-23T04:27:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('4892e484-9e9b-42f2-acc5-f9a760f8b9a0', '20fc0210-19e1-455a-8900-122cfc3133f4', 'bn', 'জন্ডিস হয়েছে, খাবারে অরুচি', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"আজ থেকে"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'gastroenterology', 'routine', 'আপনি জন্ডিস বা লিভারের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা পরিপাকতন্ত্র ও লিভার বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['jaundice']::text[], NULL, '{"symptoms":"jaundice or liver problem","duration":"আজ থেকে","severity":"mild","note":"জন্ডিস হয়েছে, খাবারে অরুচি / আজ থেকে / হালকা"}'::jsonb, '2026-08-23T02:41:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('a0a98c59-31e0-4967-9491-f1d23f0cb781', 'd3c32d1a-5eec-4d25-a18e-fafb4efbb30d', 'bn', 'খাওয়ার পর পেট ব্যথা আর গ্যাস্ট্রিক', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"এক মাসের বেশি"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'gastroenterology', 'within_48h', 'আপনি পেট ব্যথা ও গ্যাস্ট্রিক-এর কথা বলেছেন। এ ধরনের সমস্যা পরিপাকতন্ত্র ও লিভার বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['stomach_pain', 'acidity']::text[], NULL, '{"symptoms":"stomach pain and acidity","duration":"এক মাস","severity":"severe","note":"খাওয়ার পর পেট ব্যথা আর গ্যাস্ট্রিক / এক মাসের বেশি / খুব বেশি"}'::jsonb, '2026-08-23T15:02:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('3f2b93d5-c95c-40bb-ae05-a596ec63eabe', '79b2baa7-843a-4882-8028-bafe8d65b7fb', 'en', 'I am pregnant and need a check-up', '[{"question":"How long have you had this problem?","answer":"1–2 weeks"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'gynecology', 'within_48h', 'You mentioned pregnancy. Gynaecology & Obstetrics doctors treat these problems, so that is the right place to start.', ARRAY['pregnancy']::text[], NULL, '{"symptoms":"pregnancy","duration":"2 weeks","severity":"severe","note":"I am pregnant and need a check-up / 1–2 weeks / Severe"}'::jsonb, '2026-08-23T06:43:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('0d6d6868-1862-4b47-956a-bf8f81931e94', '7458ebe6-f9d8-4b5e-a8f1-6fcd44ac59a7', 'bn', 'বাচ্চার দুই দিন ধরে জ্বর আর কাশি', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'pediatrics', 'within_48h', 'আপনি একটি শিশুর জ্বর ও কাশি-এর কথা বলেছেন। শিশুদের চিকিৎসা শিশুরোগ বিভাগের ডাক্তাররা করেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['child', 'fever', 'cough']::text[], NULL, '{"symptoms":"fever and cough (child patient)","duration":"দুই দিন","severity":"moderate","note":"বাচ্চার দুই দিন ধরে জ্বর আর কাশি / মাঝারি"}'::jsonb, '2026-08-23T05:38:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('884b5774-3642-4b53-845a-54ffa4394a9a', 'f10a64dc-530a-447a-b6be-926ea3b7a4ba', 'en', 'Sore throat and tonsil pain', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'ent', 'routine', 'You mentioned throat problems. ENT (Ear, Nose & Throat) doctors treat these problems, so that is the right place to start.', ARRAY['throat']::text[], NULL, '{"symptoms":"throat problems","duration":"since today","severity":"mild","note":"Sore throat and tonsil pain / Since today / Mild"}'::jsonb, '2026-08-23T15:43:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('025ffecf-b3d7-4671-9367-5565dc0b22a2', '4b6a73d8-1276-4257-a9ae-abdf83eede10', 'bn', 'কানে ব্যথা আর কম শুনি', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"আজ থেকে"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'ent', 'routine', 'আপনি কানের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা নাক, কান ও গলা বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['ear']::text[], NULL, '{"symptoms":"ear problems","duration":"আজ থেকে","severity":"moderate","note":"কানে ব্যথা আর কম শুনি / আজ থেকে / মাঝারি"}'::jsonb, '2026-08-23T05:55:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('d0a989c4-3c7b-4ea2-9e2c-58cbe34b69fd', '4b6a73d8-1276-4257-a9ae-abdf83eede10', 'bn', 'অনেক দিনের কাশি আর হাঁপানি', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'respiratory', 'within_48h', 'আপনি কাশি-এর কথা বলেছেন। এ ধরনের সমস্যা বক্ষব্যাধি বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['cough']::text[], NULL, '{"symptoms":"cough","duration":"অনেক দিন","severity":"severe","note":"অনেক দিনের কাশি আর হাঁপানি / খুব বেশি"}'::jsonb, '2026-08-23T08:57:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('7cf438d3-1418-4a4c-a189-3ed1e86b4b31', '339e30a1-0023-4663-b556-7dca67367e8f', 'en', 'Feeling weak and tired all the time', '[{"question":"How long have you had this problem?","answer":"More than a month"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'medicine', 'routine', 'You mentioned weakness. Medicine doctors treat these problems, so that is the right place to start.', ARRAY['weakness']::text[], NULL, '{"symptoms":"weakness","duration":"a month","severity":"moderate","note":"Feeling weak and tired all the time / More than a month / Moderate"}'::jsonb, '2026-08-24T02:07:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('a828ce62-30a7-412d-80e0-2be78d60f9d8', '7aecad99-e228-46a9-8bc7-26ea03783633', 'bn', 'কয়েক মাস ধরে মাসিক অনিয়মিত', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'gynecology', 'routine', 'আপনি মাসিকের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা স্ত্রীরোগ ও প্রসূতি বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['periods']::text[], NULL, '{"symptoms":"period problems","duration":"কয়েক মাস","severity":"mild","note":"কয়েক মাস ধরে মাসিক অনিয়মিত / হালকা"}'::jsonb, '2026-08-24T14:41:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('16662af6-99d0-4243-bcf8-23f5ac656363', '38b3ea1a-7c3c-4c56-acb1-dc62d519ab99', 'bn', 'খাওয়ার পর পেট ব্যথা আর গ্যাস্ট্রিক', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"এক মাসের বেশি"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'gastroenterology', 'routine', 'আপনি পেট ব্যথা ও গ্যাস্ট্রিক-এর কথা বলেছেন। এ ধরনের সমস্যা পরিপাকতন্ত্র ও লিভার বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['stomach_pain', 'acidity']::text[], NULL, '{"symptoms":"stomach pain and acidity","duration":"এক মাস","severity":"moderate","note":"খাওয়ার পর পেট ব্যথা আর গ্যাস্ট্রিক / এক মাসের বেশি / মাঝারি"}'::jsonb, '2026-08-23T02:13:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('e2914d62-9749-4d30-a9d9-806455f3d188', '47704834-9390-4f76-bfb5-c590c075524a', 'en', 'My baby is not feeding well and has loose motion', '[{"question":"How long have you had this problem?","answer":"More than a month"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'pediatrics', 'within_48h', 'You described diarrhoea in a child. Paediatrics doctors treat children, so that is the right place to start.', ARRAY['child', 'diarrhea']::text[], NULL, '{"symptoms":"diarrhoea (child patient)","duration":"a month","severity":"moderate","note":"My baby is not feeding well and has loose motion / More than a month / Moderate"}'::jsonb, '2026-08-25T09:54:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('7df78877-16a3-4226-828d-f47f341d2050', '56ebd162-30ad-47a0-952f-a975c90712ad', 'bn', 'তিন দিন ধরে জ্বর আর শরীর ব্যথা', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'medicine', 'within_48h', 'আপনি জ্বর ও শরীর ব্যথা-এর কথা বলেছেন। এ ধরনের সমস্যা মেডিসিন বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['fever', 'body_ache']::text[], NULL, '{"symptoms":"fever and body ache","duration":"তিন দিন","severity":"moderate","note":"তিন দিন ধরে জ্বর আর শরীর ব্যথা / মাঝারি"}'::jsonb, '2026-08-25T13:59:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('578dc3f8-51d3-4490-9de8-1a16640816fb', 'b4fad5d8-e32a-422b-9619-0cd718d096e8', 'en', 'Fever and body ache for three days', '[{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'medicine', 'routine', 'You mentioned fever and body ache. Medicine doctors treat these problems, so that is the right place to start.', ARRAY['fever', 'body_ache']::text[], NULL, '{"symptoms":"fever and body ache","duration":"three days","severity":"mild","note":"Fever and body ache for three days / Mild"}'::jsonb, '2026-08-25T10:24:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('a4336b17-2a9e-402e-8fec-25c74444e847', 'fc3307d4-2e4c-4d69-a343-d46751ce31e9', 'bn', 'তিন দিন ধরে জ্বর আর শরীর ব্যথা', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'medicine', 'routine', 'আপনি জ্বর ও শরীর ব্যথা-এর কথা বলেছেন। এ ধরনের সমস্যা মেডিসিন বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['fever', 'body_ache']::text[], NULL, '{"symptoms":"fever and body ache","duration":"তিন দিন","severity":"mild","note":"তিন দিন ধরে জ্বর আর শরীর ব্যথা / হালকা"}'::jsonb, '2026-08-24T08:40:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('35d4c1fe-9934-42cd-89a9-0869aab1893a', '4ef7cf1b-c4a3-4f4b-bd1b-4c8d6cfcc87b', 'en', 'Heart beating fast when I climb stairs', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'cardiology', 'routine', 'You mentioned palpitations. Cardiology doctors treat these problems, so that is the right place to start.', ARRAY['palpitations']::text[], NULL, '{"symptoms":"palpitations","duration":"since today","severity":"moderate","note":"Heart beating fast when I climb stairs / Since today / Moderate"}'::jsonb, '2026-08-24T13:25:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('7fa5d9fd-2a44-436c-ad68-212f5334a744', 'cbdb7fd4-324a-4498-9783-903beb64319c', 'en', 'My baby is not feeding well and has loose motion', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'pediatrics', 'routine', 'You described diarrhoea in a child. Paediatrics doctors treat children, so that is the right place to start.', ARRAY['child', 'diarrhea']::text[], NULL, '{"symptoms":"diarrhoea (child patient)","duration":"since today","severity":"mild","note":"My baby is not feeding well and has loose motion / Since today / Mild"}'::jsonb, '2026-08-25T04:38:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('ed794a3b-6794-49fe-bfe4-758f4d1c24af', '90f63dda-938e-450a-a040-33d2c0590b47', 'en', 'My child has fever and cough', '[{"question":"How long have you had this problem?","answer":"1–2 weeks"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'pediatrics', 'routine', 'You described fever and cough in a child. Paediatrics doctors treat children, so that is the right place to start.', ARRAY['child', 'fever', 'cough']::text[], NULL, '{"symptoms":"fever and cough (child patient)","duration":"2 weeks","severity":"mild","note":"My child has fever and cough / 1–2 weeks / Mild"}'::jsonb, '2026-08-23T10:42:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('76e43a17-6e61-464d-a5df-12f2874376d2', 'f58cc255-0ccf-44bc-a5ef-0cb126bb5438', 'bn', 'বাচ্চার দুই দিন ধরে জ্বর আর কাশি', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'pediatrics', 'within_48h', 'আপনি একটি শিশুর জ্বর ও কাশি-এর কথা বলেছেন। শিশুদের চিকিৎসা শিশুরোগ বিভাগের ডাক্তাররা করেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['child', 'fever', 'cough']::text[], NULL, '{"symptoms":"fever and cough (child patient)","duration":"দুই দিন","severity":"severe","note":"বাচ্চার দুই দিন ধরে জ্বর আর কাশি / খুব বেশি"}'::jsonb, '2026-08-26T14:39:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('405c9fcf-8a05-4a18-9ec4-4d5546bfdd85', '3bd6a7a1-13d8-4a89-9dd2-c144da1014a5', 'bn', 'অনেক দিনের কাশি আর হাঁপানি', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'respiratory', 'routine', 'আপনি কাশি-এর কথা বলেছেন। এ ধরনের সমস্যা বক্ষব্যাধি বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['cough']::text[], NULL, '{"symptoms":"cough","duration":"অনেক দিন","severity":"moderate","note":"অনেক দিনের কাশি আর হাঁপানি / মাঝারি"}'::jsonb, '2026-08-25T07:38:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('97dd9e77-c82d-4ad2-a2c8-20e3e898149f', '2ca5bae2-8af3-4a25-8704-6c8df81081ff', 'bn', 'অনেক দিনের কাশি আর হাঁপানি', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'respiratory', 'routine', 'আপনি কাশি-এর কথা বলেছেন। এ ধরনের সমস্যা বক্ষব্যাধি বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['cough']::text[], NULL, '{"symptoms":"cough","duration":"অনেক দিন","severity":"moderate","note":"অনেক দিনের কাশি আর হাঁপানি / মাঝারি"}'::jsonb, '2026-08-24T05:57:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('c2636ba9-f858-45c3-b81d-f6929fa2497e', '3a996823-3d85-47c8-add9-af5370163c73', 'en', 'Fever and body ache for three days', '[{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'medicine', 'routine', 'You mentioned fever and body ache. Medicine doctors treat these problems, so that is the right place to start.', ARRAY['fever', 'body_ache']::text[], NULL, '{"symptoms":"fever and body ache","duration":"three days","severity":"mild","note":"Fever and body ache for three days / Mild"}'::jsonb, '2026-08-26T11:50:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('11b05067-80b6-4f50-a694-7c1a1b4d29f9', 'f10a64dc-530a-447a-b6be-926ea3b7a4ba', 'bn', 'অনেক দিন ধরে কোমর ব্যথা', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'orthopedics', 'routine', 'আপনি কোমর ব্যথা-এর কথা বলেছেন। এ ধরনের সমস্যা অর্থোপেডিক্স বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['back_pain']::text[], NULL, '{"symptoms":"back pain","duration":"অনেক দিন","severity":"moderate","note":"অনেক দিন ধরে কোমর ব্যথা / মাঝারি"}'::jsonb, '2026-08-24T15:09:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('12363a26-6939-4a80-bb90-27c96568a7dd', 'e1bb6c96-e517-4419-b09d-82d24c760df4', 'bn', 'কানে ব্যথা আর কম শুনি', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"কয়েক দিন"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'ent', 'routine', 'আপনি কানের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা নাক, কান ও গলা বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['ear']::text[], NULL, '{"symptoms":"ear problems","duration":"কয়েক দিন","severity":"moderate","note":"কানে ব্যথা আর কম শুনি / কয়েক দিন / মাঝারি"}'::jsonb, '2026-08-25T02:31:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('c37b38f5-0a61-4b48-bbf3-6f437ba60f96', 'eb8ee420-1dcd-443e-8ba6-747063076c4a', 'en', 'Feeling weak and tired all the time', '[{"question":"How long have you had this problem?","answer":"1–2 weeks"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'medicine', 'within_48h', 'You mentioned weakness. Medicine doctors treat these problems, so that is the right place to start.', ARRAY['weakness']::text[], NULL, '{"symptoms":"weakness","duration":"2 weeks","severity":"severe","note":"Feeling weak and tired all the time / 1–2 weeks / Severe"}'::jsonb, '2026-08-29T12:31:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('a53fe650-49a8-4e30-9bea-7caeee363f61', '20fc0210-19e1-455a-8900-122cfc3133f4', 'bn', 'প্রেশার বেড়েছে, মাঝে মাঝে বুক ধড়ফড় করে', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"কয়েক দিন"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'cardiology', 'routine', 'আপনি উচ্চ রক্তচাপ ও বুক ধড়ফড়-এর কথা বলেছেন। এ ধরনের সমস্যা হৃদরোগ বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['high_bp', 'palpitations']::text[], NULL, '{"symptoms":"high blood pressure and palpitations","duration":"কয়েক দিন","severity":"moderate","note":"প্রেশার বেড়েছে, মাঝে মাঝে বুক ধড়ফড় করে / কয়েক দিন / মাঝারি"}'::jsonb, '2026-08-24T03:51:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('b5d5ef39-f890-495e-a254-eadf3905f96c', '88fb6134-3337-4fac-8fc3-444e339a952c', 'en', 'Headache every day and dizziness', '[{"question":"How long have you had this problem?","answer":"A few days"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'neurology', 'within_48h', 'You mentioned headache and dizziness. Neurology doctors treat these problems, so that is the right place to start.', ARRAY['headache', 'dizziness']::text[], NULL, '{"symptoms":"headache and dizziness","duration":"a few days","severity":"severe","note":"Headache every day and dizziness / A few days / Severe"}'::jsonb, '2026-08-25T12:31:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('2bc24bdc-a029-42ef-86de-94b56256bf2f', '78434abb-47c8-4fc8-b73b-586f43ed7738', 'bn', 'কয়েক মাস ধরে মাসিক অনিয়মিত', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'gynecology', 'within_48h', 'আপনি মাসিকের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা স্ত্রীরোগ ও প্রসূতি বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['periods']::text[], NULL, '{"symptoms":"period problems","duration":"কয়েক মাস","severity":"severe","note":"কয়েক মাস ধরে মাসিক অনিয়মিত / খুব বেশি"}'::jsonb, '2026-08-28T14:28:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('00819121-6702-41de-ad57-db0e872a7706', '2be32e0d-a2af-42a3-ae96-f4fee9073830', 'en', 'Irregular periods for a few months', '[{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'gynecology', 'routine', 'You mentioned period problems. Gynaecology & Obstetrics doctors treat these problems, so that is the right place to start.', ARRAY['periods']::text[], NULL, '{"symptoms":"period problems","duration":"a few months","severity":"mild","note":"Irregular periods for a few months / Mild"}'::jsonb, '2026-08-28T03:27:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('48f71385-d4e0-4883-9172-89f57c1648db', '7c28a20f-42bb-4c13-a9bf-df4a7bd66c40', 'bn', 'চুল পড়ে যাচ্ছে, খুশকি', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"কয়েক দিন"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'dermatology', 'within_48h', 'আপনি চুল পড়া-এর কথা বলেছেন। এ ধরনের সমস্যা চর্মরোগ বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['hair_loss']::text[], NULL, '{"symptoms":"hair loss","duration":"কয়েক দিন","severity":"severe","note":"চুল পড়ে যাচ্ছে, খুশকি / কয়েক দিন / খুব বেশি"}'::jsonb, '2026-08-24T14:13:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('fd2173d1-06c4-4be1-a817-15f072d15431', 'f58cc255-0ccf-44bc-a5ef-0cb126bb5438', 'bn', 'চোখে ঝাপসা দেখি, চোখ লাল', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"এক মাসের বেশি"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'ophthalmology', 'within_48h', 'আপনি চোখের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা চক্ষু বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['eye']::text[], NULL, '{"symptoms":"eye problems","duration":"এক মাস","severity":"severe","note":"চোখে ঝাপসা দেখি, চোখ লাল / এক মাসের বেশি / খুব বেশি"}'::jsonb, '2026-08-29T15:52:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('a41a40f9-c1d6-4ce9-973a-747e6ad1dcc2', 'f4914912-3ce1-41b9-bd24-e2dbf85b0a32', 'bn', 'তিন দিন ধরে জ্বর আর শরীর ব্যথা', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'medicine', 'within_48h', 'আপনি জ্বর ও শরীর ব্যথা-এর কথা বলেছেন। এ ধরনের সমস্যা মেডিসিন বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['fever', 'body_ache']::text[], NULL, '{"symptoms":"fever and body ache","duration":"তিন দিন","severity":"moderate","note":"তিন দিন ধরে জ্বর আর শরীর ব্যথা / মাঝারি"}'::jsonb, '2026-08-28T06:15:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('d9983a68-a3b1-4e04-9abb-0c3b8fd7f895', '4c9c6594-9f6a-4ac5-a566-2d9eefc780e8', 'en', 'Irregular periods for a few months', '[{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'gynecology', 'routine', 'You mentioned period problems. Gynaecology & Obstetrics doctors treat these problems, so that is the right place to start.', ARRAY['periods']::text[], NULL, '{"symptoms":"period problems","duration":"a few months","severity":"mild","note":"Irregular periods for a few months / Mild"}'::jsonb, '2026-08-29T03:47:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('fc82ece8-c0c9-41a7-a989-cc961254a89f', '038656ce-769c-41b0-af93-69db2307756a', 'en', 'My child has fever and cough', '[{"question":"How long have you had this problem?","answer":"More than a month"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'pediatrics', 'routine', 'You described fever and cough in a child. Paediatrics doctors treat children, so that is the right place to start.', ARRAY['child', 'fever', 'cough']::text[], NULL, '{"symptoms":"fever and cough (child patient)","duration":"a month","severity":"mild","note":"My child has fever and cough / More than a month / Mild"}'::jsonb, '2026-08-30T03:43:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('d147188d-f013-4818-a41c-3963c5f14478', '86c9276c-684b-479b-947b-6607b6d86c71', 'en', 'Sore throat and tonsil pain', '[{"question":"How long have you had this problem?","answer":"A few days"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'ent', 'within_48h', 'You mentioned throat problems. ENT (Ear, Nose & Throat) doctors treat these problems, so that is the right place to start.', ARRAY['throat']::text[], NULL, '{"symptoms":"throat problems","duration":"a few days","severity":"severe","note":"Sore throat and tonsil pain / A few days / Severe"}'::jsonb, '2026-08-26T12:39:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('557f3798-6ad4-4d8f-a0c2-f67e5a3a369e', 'd3c32d1a-5eec-4d25-a18e-fafb4efbb30d', 'en', 'Feeling weak and tired all the time', '[{"question":"How long have you had this problem?","answer":"More than a month"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'medicine', 'within_48h', 'You mentioned weakness. Medicine doctors treat these problems, so that is the right place to start.', ARRAY['weakness']::text[], NULL, '{"symptoms":"weakness","duration":"a month","severity":"severe","note":"Feeling weak and tired all the time / More than a month / Severe"}'::jsonb, '2026-08-29T08:13:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('af7f1ab3-c4bf-4b72-b7a9-62865d0027b1', '0ccf4637-52f0-48be-9f6c-2b959b955cc2', 'bn', 'প্রতিদিন মাথাব্যথা আর মাথা ঘোরা', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"১–২ সপ্তাহ"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'neurology', 'routine', 'আপনি মাথাব্যথা ও মাথা ঘোরা-এর কথা বলেছেন। এ ধরনের সমস্যা স্নায়ুরোগ বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['headache', 'dizziness']::text[], NULL, '{"symptoms":"headache and dizziness","duration":"2 সপ্তাহ","severity":"mild","note":"প্রতিদিন মাথাব্যথা আর মাথা ঘোরা / ১–২ সপ্তাহ / হালকা"}'::jsonb, '2026-08-27T11:52:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('c0b45781-7e4d-46e1-83d8-cefe69b80c47', 'cbdb7fd4-324a-4498-9783-903beb64319c', 'en', 'Stomach pain and acidity after meals', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'gastroenterology', 'within_48h', 'You mentioned stomach pain and acidity. Gastroenterology & Liver doctors treat these problems, so that is the right place to start.', ARRAY['stomach_pain', 'acidity']::text[], NULL, '{"symptoms":"stomach pain and acidity","duration":"since today","severity":"severe","note":"Stomach pain and acidity after meals / Since today / Severe"}'::jsonb, '2026-08-28T13:16:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('52ddfa21-25fc-4314-8e96-85aaf027c17d', '86c9276c-684b-479b-947b-6607b6d86c71', 'bn', 'খাওয়ার পর পেট ব্যথা আর গ্যাস্ট্রিক', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"আজ থেকে"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'gastroenterology', 'routine', 'আপনি পেট ব্যথা ও গ্যাস্ট্রিক-এর কথা বলেছেন। এ ধরনের সমস্যা পরিপাকতন্ত্র ও লিভার বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['stomach_pain', 'acidity']::text[], NULL, '{"symptoms":"stomach pain and acidity","duration":"আজ থেকে","severity":"moderate","note":"খাওয়ার পর পেট ব্যথা আর গ্যাস্ট্রিক / আজ থেকে / মাঝারি"}'::jsonb, '2026-08-28T11:37:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('462c7c6f-d45a-4fb1-acd6-e1168f16bb62', '95b7fa03-ec69-4e0e-a56e-240ca9594ccb', 'bn', 'হাঁটুতে ব্যথা, হাঁটতে কষ্ট হয়', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"কয়েক দিন"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'orthopedics', 'routine', 'আপনি জোড়ায় ব্যথা-এর কথা বলেছেন। এ ধরনের সমস্যা অর্থোপেডিক্স বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['joint_pain']::text[], NULL, '{"symptoms":"joint pain","duration":"কয়েক দিন","severity":"moderate","note":"হাঁটুতে ব্যথা, হাঁটতে কষ্ট হয় / কয়েক দিন / মাঝারি"}'::jsonb, '2026-08-28T09:47:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('bd0748f4-1781-47a1-b42d-34b5ef3d3fc6', '921e29e7-4f55-4dda-81be-334126e79377', 'bn', 'চামড়ায় চুলকানি আর ফুসকুড়ি', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"আজ থেকে"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'dermatology', 'routine', 'আপনি চর্মরোগ-এর কথা বলেছেন। এ ধরনের সমস্যা চর্মরোগ বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['skin']::text[], NULL, '{"symptoms":"skin problems","duration":"আজ থেকে","severity":"mild","note":"চামড়ায় চুলকানি আর ফুসকুড়ি / আজ থেকে / হালকা"}'::jsonb, '2026-08-25T08:29:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('3f19255a-f396-4545-9701-867cc6aaf970', '8c5728d0-91f3-469b-b67c-bfb007b892e6', 'en', 'Itchy skin rash on my arms', '[{"question":"How long have you had this problem?","answer":"1–2 weeks"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'dermatology', 'routine', 'You mentioned skin problems. Dermatology doctors treat these problems, so that is the right place to start.', ARRAY['skin']::text[], NULL, '{"symptoms":"skin problems","duration":"2 weeks","severity":"mild","note":"Itchy skin rash on my arms / 1–2 weeks / Mild"}'::jsonb, '2026-08-28T12:07:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('21efdb94-c19c-499d-8cfa-9b80c5cdb2c5', 'd9552cab-bc75-457f-a968-889795cfa1cc', 'bn', 'চুল পড়ে যাচ্ছে, খুশকি', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"১–২ সপ্তাহ"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'dermatology', 'within_48h', 'আপনি চুল পড়া-এর কথা বলেছেন। এ ধরনের সমস্যা চর্মরোগ বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['hair_loss']::text[], NULL, '{"symptoms":"hair loss","duration":"2 সপ্তাহ","severity":"severe","note":"চুল পড়ে যাচ্ছে, খুশকি / ১–২ সপ্তাহ / খুব বেশি"}'::jsonb, '2026-08-27T10:21:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('f5d8a52f-92ff-4073-b382-bdc60ff50f8a', '5a061fc9-b0f3-47a3-a623-feae44084767', 'en', 'Blurry vision and eye pain', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'ophthalmology', 'routine', 'You mentioned eye problems. Eye (Ophthalmology) doctors treat these problems, so that is the right place to start.', ARRAY['eye']::text[], NULL, '{"symptoms":"eye problems","duration":"since today","severity":"mild","note":"Blurry vision and eye pain / Since today / Mild"}'::jsonb, '2026-08-31T02:31:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('82ad16e5-512d-4ef0-8d38-0b9ceef0481b', '7e6f3489-de55-441f-87b2-c9f535c939e3', 'en', 'Blurry vision and eye pain', '[{"question":"How long have you had this problem?","answer":"A few days"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'ophthalmology', 'within_48h', 'You mentioned eye problems. Eye (Ophthalmology) doctors treat these problems, so that is the right place to start.', ARRAY['eye']::text[], NULL, '{"symptoms":"eye problems","duration":"a few days","severity":"severe","note":"Blurry vision and eye pain / A few days / Severe"}'::jsonb, '2026-08-28T07:31:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('8f933745-bf9c-4cd4-9546-236a24e52ce7', '6c2cd65e-e3d4-4472-bb94-376ffaf10385', 'en', 'My blood pressure is high and I get palpitations', '[{"question":"How long have you had this problem?","answer":"A few days"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'cardiology', 'routine', 'You mentioned high blood pressure and palpitations. Cardiology doctors treat these problems, so that is the right place to start.', ARRAY['high_bp', 'palpitations']::text[], NULL, '{"symptoms":"high blood pressure and palpitations","duration":"a few days","severity":"moderate","note":"My blood pressure is high and I get palpitations / A few days / Moderate"}'::jsonb, '2026-08-29T08:17:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('430a91c6-e6af-4a68-a26e-eba88bf784cb', '0fc2ada7-87c1-48f9-badc-5280909baa9f', 'en', 'Stomach pain and acidity after meals', '[{"question":"How long have you had this problem?","answer":"A few days"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'gastroenterology', 'within_48h', 'You mentioned stomach pain and acidity. Gastroenterology & Liver doctors treat these problems, so that is the right place to start.', ARRAY['stomach_pain', 'acidity']::text[], NULL, '{"symptoms":"stomach pain and acidity","duration":"a few days","severity":"severe","note":"Stomach pain and acidity after meals / A few days / Severe"}'::jsonb, '2026-08-31T02:09:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('2d9a452f-3ed9-4d78-9931-dd7b3b91f6de', 'e55e51f5-e403-42ed-ba4d-29a4826af815', 'bn', 'কয়েক মাস ধরে মাসিক অনিয়মিত', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'gynecology', 'routine', 'আপনি মাসিকের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা স্ত্রীরোগ ও প্রসূতি বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['periods']::text[], NULL, '{"symptoms":"period problems","duration":"কয়েক মাস","severity":"moderate","note":"কয়েক মাস ধরে মাসিক অনিয়মিত / মাঝারি"}'::jsonb, '2026-08-30T13:23:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('3a613a7c-31cb-4285-8d81-c1100fd49aa3', '38b3ea1a-7c3c-4c56-acb1-dc62d519ab99', 'en', 'My child has fever and cough', '[{"question":"How long have you had this problem?","answer":"A few days"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'pediatrics', 'within_48h', 'You described fever and cough in a child. Paediatrics doctors treat children, so that is the right place to start.', ARRAY['child', 'fever', 'cough']::text[], NULL, '{"symptoms":"fever and cough (child patient)","duration":"a few days","severity":"moderate","note":"My child has fever and cough / A few days / Moderate"}'::jsonb, '2026-08-28T03:13:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('6df7f7cb-372c-4db8-8fb5-3b3304340b9b', '8e5b42b0-54fc-49e2-b4c1-84ce27b15f8d', 'en', 'Feeling weak and tired all the time', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'medicine', 'routine', 'You mentioned weakness. Medicine doctors treat these problems, so that is the right place to start.', ARRAY['weakness']::text[], NULL, '{"symptoms":"weakness","duration":"since today","severity":"moderate","note":"Feeling weak and tired all the time / Since today / Moderate"}'::jsonb, '2026-08-29T10:51:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('9d3f58d2-6613-44ef-bb23-a868c8367da4', '0dd817c7-12b9-4b2f-9f84-6034cf61275b', 'en', 'Fever and body ache for three days', '[{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'medicine', 'within_48h', 'You mentioned fever and body ache. Medicine doctors treat these problems, so that is the right place to start.', ARRAY['fever', 'body_ache']::text[], NULL, '{"symptoms":"fever and body ache","duration":"three days","severity":"moderate","note":"Fever and body ache for three days / Moderate"}'::jsonb, '2026-08-30T08:17:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('06d8a186-d64b-40d6-8364-2fe1a26c1756', 'fdf67440-b118-4b31-b65c-38feac807cbb', 'en', 'Headache every day and dizziness', '[{"question":"How long have you had this problem?","answer":"1–2 weeks"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'neurology', 'within_48h', 'You mentioned headache and dizziness. Neurology doctors treat these problems, so that is the right place to start.', ARRAY['headache', 'dizziness']::text[], NULL, '{"symptoms":"headache and dizziness","duration":"2 weeks","severity":"severe","note":"Headache every day and dizziness / 1–2 weeks / Severe"}'::jsonb, '2026-08-30T04:32:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('c61c646c-c66b-46ad-a505-18c2a6526abf', 'f34c1b22-e657-459a-9c02-4e39b61ca0e1', 'en', 'Numbness and tingling in my hands', '[{"question":"How long have you had this problem?","answer":"More than a month"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'neurology', 'within_48h', 'You mentioned numbness or tingling. Neurology doctors treat these problems, so that is the right place to start.', ARRAY['numbness']::text[], NULL, '{"symptoms":"numbness or tingling","duration":"a month","severity":"severe","note":"Numbness and tingling in my hands / More than a month / Severe"}'::jsonb, '2026-09-02T08:26:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('93034943-178a-4e0a-896b-de0d4ec1e6a2', 'a6bbcc23-a745-4694-bf5e-e05ba9f646b8', 'bn', 'অনেক দিনের কাশি আর হাঁপানি', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'respiratory', 'routine', 'আপনি কাশি-এর কথা বলেছেন। এ ধরনের সমস্যা বক্ষব্যাধি বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['cough']::text[], NULL, '{"symptoms":"cough","duration":"অনেক দিন","severity":"moderate","note":"অনেক দিনের কাশি আর হাঁপানি / মাঝারি"}'::jsonb, '2026-08-29T12:45:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('c12fd80d-a19e-4ffe-93b6-3fcc7963575f', '3bd6a7a1-13d8-4a89-9dd2-c144da1014a5', 'bn', 'অনেক দিনের কাশি আর হাঁপানি', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'respiratory', 'routine', 'আপনি কাশি-এর কথা বলেছেন। এ ধরনের সমস্যা বক্ষব্যাধি বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['cough']::text[], NULL, '{"symptoms":"cough","duration":"অনেক দিন","severity":"mild","note":"অনেক দিনের কাশি আর হাঁপানি / হালকা"}'::jsonb, '2026-08-29T04:33:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('53f6912b-a479-44b7-a736-6a17233c90d3', '06be4f9c-7e86-4d1c-9052-aa5ac0c30bf1', 'en', 'Blurry vision and eye pain', '[{"question":"How long have you had this problem?","answer":"More than a month"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'ophthalmology', 'within_48h', 'You mentioned eye problems. Eye (Ophthalmology) doctors treat these problems, so that is the right place to start.', ARRAY['eye']::text[], NULL, '{"symptoms":"eye problems","duration":"a month","severity":"severe","note":"Blurry vision and eye pain / More than a month / Severe"}'::jsonb, '2026-08-30T11:15:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('7458f8b1-6072-45a4-b5f4-3741697a709e', 'a53aafb7-cd70-4b68-9d29-d1ba2c72fd25', 'en', 'Burning when passing urine', '[{"question":"How long have you had this problem?","answer":"1–2 weeks"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'urology', 'routine', 'You mentioned urine or kidney problems. Kidney & Urology doctors treat these problems, so that is the right place to start.', ARRAY['urine']::text[], NULL, '{"symptoms":"urine or kidney problems","duration":"2 weeks","severity":"mild","note":"Burning when passing urine / 1–2 weeks / Mild"}'::jsonb, '2026-09-02T09:49:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('b7add7e2-b5cd-4678-a4b5-fee0ac2d621f', '2e57e115-856e-45db-b73a-0bbdf518e360', 'bn', 'তিন দিন ধরে জ্বর আর শরীর ব্যথা', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'medicine', 'within_48h', 'আপনি জ্বর ও শরীর ব্যথা-এর কথা বলেছেন। এ ধরনের সমস্যা মেডিসিন বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['fever', 'body_ache']::text[], NULL, '{"symptoms":"fever and body ache","duration":"তিন দিন","severity":"moderate","note":"তিন দিন ধরে জ্বর আর শরীর ব্যথা / মাঝারি"}'::jsonb, '2026-08-29T07:45:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('c81d5682-c5d3-4964-b6f2-a1a03672b298', '88fb6134-3337-4fac-8fc3-444e339a952c', 'en', 'Feeling weak and tired all the time', '[{"question":"How long have you had this problem?","answer":"More than a month"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'medicine', 'routine', 'You mentioned weakness. Medicine doctors treat these problems, so that is the right place to start.', ARRAY['weakness']::text[], NULL, '{"symptoms":"weakness","duration":"a month","severity":"moderate","note":"Feeling weak and tired all the time / More than a month / Moderate"}'::jsonb, '2026-08-29T02:40:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('926e5c6e-04d6-48f1-8034-155c9dc2529e', 'e55e51f5-e403-42ed-ba4d-29a4826af815', 'en', 'Stomach pain and acidity after meals', '[{"question":"How long have you had this problem?","answer":"A few days"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'gastroenterology', 'routine', 'You mentioned stomach pain and acidity. Gastroenterology & Liver doctors treat these problems, so that is the right place to start.', ARRAY['stomach_pain', 'acidity']::text[], NULL, '{"symptoms":"stomach pain and acidity","duration":"a few days","severity":"mild","note":"Stomach pain and acidity after meals / A few days / Mild"}'::jsonb, '2026-08-31T02:45:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('6a32d350-4099-41b1-aa52-47e7e3d2aa05', '0fc2ada7-87c1-48f9-badc-5280909baa9f', 'en', 'Knee pain when climbing stairs', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'orthopedics', 'routine', 'You mentioned joint pain. Orthopaedics doctors treat these problems, so that is the right place to start.', ARRAY['joint_pain']::text[], NULL, '{"symptoms":"joint pain","duration":"since today","severity":"mild","note":"Knee pain when climbing stairs / Since today / Mild"}'::jsonb, '2026-09-02T05:38:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('89d46be3-afa9-4d8e-a39e-2f1b791ed53c', 'd759e7a6-84f8-4500-84c5-3d943e0e0741', 'en', 'I am pregnant and need a check-up', '[{"question":"How long have you had this problem?","answer":"1–2 weeks"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'gynecology', 'within_48h', 'You mentioned pregnancy. Gynaecology & Obstetrics doctors treat these problems, so that is the right place to start.', ARRAY['pregnancy']::text[], NULL, '{"symptoms":"pregnancy","duration":"2 weeks","severity":"moderate","note":"I am pregnant and need a check-up / 1–2 weeks / Moderate"}'::jsonb, '2026-09-02T11:48:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('3b2e1708-fb8c-45e4-a704-280b09bd7193', '38b3ea1a-7c3c-4c56-acb1-dc62d519ab99', 'bn', 'বাচ্চার দুই দিন ধরে জ্বর আর কাশি', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'pediatrics', 'within_48h', 'আপনি একটি শিশুর জ্বর ও কাশি-এর কথা বলেছেন। শিশুদের চিকিৎসা শিশুরোগ বিভাগের ডাক্তাররা করেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['child', 'fever', 'cough']::text[], NULL, '{"symptoms":"fever and cough (child patient)","duration":"দুই দিন","severity":"moderate","note":"বাচ্চার দুই দিন ধরে জ্বর আর কাশি / মাঝারি"}'::jsonb, '2026-08-29T05:58:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('d94c0f00-ba3f-4839-8984-5b043dbf05cc', 'e1bb6c96-e517-4419-b09d-82d24c760df4', 'bn', 'কানে ব্যথা আর কম শুনি', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"এক মাসের বেশি"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'ent', 'within_48h', 'আপনি কানের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা নাক, কান ও গলা বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['ear']::text[], NULL, '{"symptoms":"ear problems","duration":"এক মাস","severity":"severe","note":"কানে ব্যথা আর কম শুনি / এক মাসের বেশি / খুব বেশি"}'::jsonb, '2026-09-01T09:35:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('3578d59a-db1e-4fb2-8930-d783ebcf63f8', '87954318-9acb-4272-a29b-c8c3c95f0a42', 'bn', 'কানে ব্যথা আর কম শুনি', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"১–২ সপ্তাহ"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'ent', 'routine', 'আপনি কানের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা নাক, কান ও গলা বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['ear']::text[], NULL, '{"symptoms":"ear problems","duration":"2 সপ্তাহ","severity":"mild","note":"কানে ব্যথা আর কম শুনি / ১–২ সপ্তাহ / হালকা"}'::jsonb, '2026-08-31T01:56:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('6559b543-c13e-4822-9325-7281af1ffbfd', '60b0db75-9502-4172-922f-857ffe1ba292', 'en', 'Feeling weak and tired all the time', '[{"question":"How long have you had this problem?","answer":"More than a month"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'medicine', 'routine', 'You mentioned weakness. Medicine doctors treat these problems, so that is the right place to start.', ARRAY['weakness']::text[], NULL, '{"symptoms":"weakness","duration":"a month","severity":"mild","note":"Feeling weak and tired all the time / More than a month / Mild"}'::jsonb, '2026-09-05T10:02:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('d61a2fdb-b96b-4003-8843-f02b01cb3cfd', '447b9eb5-4615-424f-8b62-cf91711d4fdd', 'bn', 'তিন দিন ধরে জ্বর আর শরীর ব্যথা', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'medicine', 'routine', 'আপনি জ্বর ও শরীর ব্যথা-এর কথা বলেছেন। এ ধরনের সমস্যা মেডিসিন বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['fever', 'body_ache']::text[], NULL, '{"symptoms":"fever and body ache","duration":"তিন দিন","severity":"mild","note":"তিন দিন ধরে জ্বর আর শরীর ব্যথা / হালকা"}'::jsonb, '2026-09-03T06:42:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('f029415f-2b9c-4c69-8436-5e781e0b7caf', 'b98fd7c9-40d8-4852-81ea-46fa7d073e6e', 'en', 'My child has fever and cough', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'pediatrics', 'within_48h', 'You described fever and cough in a child. Paediatrics doctors treat children, so that is the right place to start.', ARRAY['child', 'fever', 'cough']::text[], NULL, '{"symptoms":"fever and cough (child patient)","duration":"since today","severity":"moderate","note":"My child has fever and cough / Since today / Moderate"}'::jsonb, '2026-09-05T04:00:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('28b5ad46-2bc7-48ae-988e-111870137a1e', '95b7fa03-ec69-4e0e-a56e-240ca9594ccb', 'en', 'My blood sugar is not under control', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'endocrinology', 'within_48h', 'You mentioned diabetes. Diabetes & Endocrinology doctors treat these problems, so that is the right place to start.', ARRAY['diabetes']::text[], NULL, '{"symptoms":"diabetes","duration":"since today","severity":"severe","note":"My blood sugar is not under control / Since today / Severe"}'::jsonb, '2026-09-01T12:04:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('322fee12-eec3-4b5e-a13d-447ab1380f74', '921e29e7-4f55-4dda-81be-334126e79377', 'bn', 'চোখে ঝাপসা দেখি, চোখ লাল', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"আজ থেকে"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'ophthalmology', 'within_48h', 'আপনি চোখের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা চক্ষু বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['eye']::text[], NULL, '{"symptoms":"eye problems","duration":"আজ থেকে","severity":"severe","note":"চোখে ঝাপসা দেখি, চোখ লাল / আজ থেকে / খুব বেশি"}'::jsonb, '2026-09-05T04:06:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('9d52e7c4-9238-484c-9ad7-8f21f8519ba3', '7c28a20f-42bb-4c13-a9bf-df4a7bd66c40', 'bn', 'চোখে ঝাপসা দেখি, চোখ লাল', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"১–২ সপ্তাহ"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'ophthalmology', 'routine', 'আপনি চোখের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা চক্ষু বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['eye']::text[], NULL, '{"symptoms":"eye problems","duration":"2 সপ্তাহ","severity":"moderate","note":"চোখে ঝাপসা দেখি, চোখ লাল / ১–২ সপ্তাহ / মাঝারি"}'::jsonb, '2026-09-05T08:46:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('1367d3c2-d259-4b08-a414-416c90482875', '038656ce-769c-41b0-af93-69db2307756a', 'en', 'Feeling weak and tired all the time', '[{"question":"How long have you had this problem?","answer":"More than a month"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'medicine', 'within_48h', 'You mentioned weakness. Medicine doctors treat these problems, so that is the right place to start.', ARRAY['weakness']::text[], NULL, '{"symptoms":"weakness","duration":"a month","severity":"severe","note":"Feeling weak and tired all the time / More than a month / Severe"}'::jsonb, '2026-09-02T11:06:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('490696c0-0172-48a9-ac29-7265d301c367', '0a06e5f9-b54e-41ca-a856-8556bd3ddebf', 'en', 'Stomach pain and acidity after meals', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'gastroenterology', 'routine', 'You mentioned stomach pain and acidity. Gastroenterology & Liver doctors treat these problems, so that is the right place to start.', ARRAY['stomach_pain', 'acidity']::text[], NULL, '{"symptoms":"stomach pain and acidity","duration":"since today","severity":"mild","note":"Stomach pain and acidity after meals / Since today / Mild"}'::jsonb, '2026-09-01T05:00:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('f750e2d2-1294-4db7-b456-64f054216c59', '038656ce-769c-41b0-af93-69db2307756a', 'en', 'Loose motion and vomiting since yesterday', '[{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'gastroenterology', 'within_48h', 'You mentioned diarrhoea and vomiting. Gastroenterology & Liver doctors treat these problems, so that is the right place to start.', ARRAY['diarrhea', 'vomiting']::text[], NULL, '{"symptoms":"diarrhoea and vomiting","duration":"since yesterday","severity":"moderate","note":"Loose motion and vomiting since yesterday / Moderate"}'::jsonb, '2026-09-03T12:59:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('df36fe98-4c04-4372-901e-bcd961fba4fc', '0a06e5f9-b54e-41ca-a856-8556bd3ddebf', 'bn', 'খুব দুর্বল লাগে, সবসময় ক্লান্ত', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"১–২ সপ্তাহ"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'medicine', 'within_48h', 'আপনি দুর্বলতা-এর কথা বলেছেন। এ ধরনের সমস্যা মেডিসিন বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['weakness']::text[], NULL, '{"symptoms":"weakness","duration":"2 সপ্তাহ","severity":"severe","note":"খুব দুর্বল লাগে, সবসময় ক্লান্ত / ১–২ সপ্তাহ / খুব বেশি"}'::jsonb, '2026-09-05T14:29:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('2790bac8-8ed2-46e0-9212-f00cd9d01b80', '505bc95d-8fc9-496d-8f50-321d1575c814', 'en', 'Numbness and tingling in my hands', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'neurology', 'routine', 'You mentioned numbness or tingling. Neurology doctors treat these problems, so that is the right place to start.', ARRAY['numbness']::text[], NULL, '{"symptoms":"numbness or tingling","duration":"since today","severity":"moderate","note":"Numbness and tingling in my hands / Since today / Moderate"}'::jsonb, '2026-09-06T14:22:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('09e658c9-3678-48fa-9606-de77e219a8c4', NULL, 'bn', 'হাঁটুতে ব্যথা, হাঁটতে কষ্ট হয়', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"কয়েক দিন"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'orthopedics', 'routine', 'আপনি জোড়ায় ব্যথা-এর কথা বলেছেন। এ ধরনের সমস্যা অর্থোপেডিক্স বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['joint_pain']::text[], NULL, '{"symptoms":"joint pain","duration":"কয়েক দিন","severity":"mild","note":"হাঁটুতে ব্যথা, হাঁটতে কষ্ট হয় / কয়েক দিন / হালকা"}'::jsonb, '2026-10-22T06:46:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('9f021ed2-8b10-487b-84c6-5dc1bbd9bebe', NULL, 'en', 'Blurry vision and eye pain', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'ophthalmology', 'routine', 'You mentioned eye problems. Eye (Ophthalmology) doctors treat these problems, so that is the right place to start.', ARRAY['eye']::text[], NULL, '{"symptoms":"eye problems","duration":"since today","severity":"moderate","note":"Blurry vision and eye pain / Since today / Moderate"}'::jsonb, '2026-11-19T03:41:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('147c0408-a603-4cc6-b05b-864abed9c49e', NULL, 'bn', 'দুশ্চিন্তা আর রাতে ঘুম হয় না', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"আজ থেকে"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'psychiatry', 'routine', 'আপনি দুশ্চিন্তা বা মন খারাপ ও ঘুমের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা মানসিক স্বাস্থ্য বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['anxiety', 'sleep']::text[], NULL, '{"symptoms":"anxiety or low mood and sleep problems","duration":"আজ থেকে","severity":"moderate","note":"দুশ্চিন্তা আর রাতে ঘুম হয় না / আজ থেকে / মাঝারি"}'::jsonb, '2026-09-23T13:47:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('0f68a3db-3047-495c-aa55-dc9d1e8b022c', NULL, 'en', 'Lower back pain for weeks', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'orthopedics', 'within_48h', 'You mentioned back pain. Orthopaedics doctors treat these problems, so that is the right place to start.', ARRAY['back_pain']::text[], NULL, '{"symptoms":"back pain","duration":"since today","severity":"severe","note":"Lower back pain for weeks / Since today / Severe"}'::jsonb, '2026-10-03T13:31:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('acc2d30b-e926-42fa-8228-718903c2eac7', NULL, 'en', 'Lower back pain for weeks', '[{"question":"How long have you had this problem?","answer":"1–2 weeks"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'orthopedics', 'routine', 'You mentioned back pain. Orthopaedics doctors treat these problems, so that is the right place to start.', ARRAY['back_pain']::text[], NULL, '{"symptoms":"back pain","duration":"2 weeks","severity":"mild","note":"Lower back pain for weeks / 1–2 weeks / Mild"}'::jsonb, '2026-11-17T14:01:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('470ab458-a7d9-4b30-9cfc-ed8e54d9890d', NULL, 'en', 'Sudden chest pain and sweating', '[]'::jsonb, 'emergency', NULL, NULL, NULL, '{}'::text[], ARRAY['chest pain']::text[], NULL, '2026-09-01T14:47:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('8584a8cb-ed0e-49e4-a92f-01fada622e6e', NULL, 'bn', 'দুশ্চিন্তা আর রাতে ঘুম হয় না', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"১–২ সপ্তাহ"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'psychiatry', 'within_48h', 'আপনি দুশ্চিন্তা বা মন খারাপ ও ঘুমের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা মানসিক স্বাস্থ্য বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['anxiety', 'sleep']::text[], NULL, '{"symptoms":"anxiety or low mood and sleep problems","duration":"2 সপ্তাহ","severity":"severe","note":"দুশ্চিন্তা আর রাতে ঘুম হয় না / ১–২ সপ্তাহ / খুব বেশি"}'::jsonb, '2026-08-28T12:32:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('be4c2e5b-259b-4dff-a863-103f4d673609', NULL, 'bn', 'হাঁটুতে ব্যথা, হাঁটতে কষ্ট হয়', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"কয়েক দিন"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'orthopedics', 'routine', 'আপনি জোড়ায় ব্যথা-এর কথা বলেছেন। এ ধরনের সমস্যা অর্থোপেডিক্স বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['joint_pain']::text[], NULL, '{"symptoms":"joint pain","duration":"কয়েক দিন","severity":"moderate","note":"হাঁটুতে ব্যথা, হাঁটতে কষ্ট হয় / কয়েক দিন / মাঝারি"}'::jsonb, '2026-10-31T09:51:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('ec453695-0aab-45f3-92f7-970977787cb1', NULL, 'en', 'Ear pain and blocked nose', '[{"question":"How long have you had this problem?","answer":"1–2 weeks"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'ent', 'routine', 'You mentioned ear problems and nose or sinus problems. ENT (Ear, Nose & Throat) doctors treat these problems, so that is the right place to start.', ARRAY['ear', 'nose_sinus']::text[], NULL, '{"symptoms":"ear problems and nose or sinus problems","duration":"2 weeks","severity":"mild","note":"Ear pain and blocked nose / 1–2 weeks / Mild"}'::jsonb, '2026-10-29T14:14:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('32a953c2-ffe9-4435-93ef-80db9ef89c3f', NULL, 'en', 'Burning when passing urine', '[{"question":"How long have you had this problem?","answer":"1–2 weeks"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'urology', 'routine', 'You mentioned urine or kidney problems. Kidney & Urology doctors treat these problems, so that is the right place to start.', ARRAY['urine']::text[], NULL, '{"symptoms":"urine or kidney problems","duration":"2 weeks","severity":"moderate","note":"Burning when passing urine / 1–2 weeks / Moderate"}'::jsonb, '2026-09-11T06:13:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('6401ef15-c0d5-40f3-9612-9d8dc34d69db', NULL, 'en', 'My child has fever and cough', '[{"question":"How long have you had this problem?","answer":"A few days"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'pediatrics', 'within_48h', 'You described fever and cough in a child. Paediatrics doctors treat children, so that is the right place to start.', ARRAY['child', 'fever', 'cough']::text[], NULL, '{"symptoms":"fever and cough (child patient)","duration":"a few days","severity":"severe","note":"My child has fever and cough / A few days / Severe"}'::jsonb, '2026-09-20T07:45:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('92dbdd9c-48f4-44d6-b729-037df85d72bc', NULL, 'en', 'Feeling weak and tired all the time', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'medicine', 'routine', 'You mentioned weakness. Medicine doctors treat these problems, so that is the right place to start.', ARRAY['weakness']::text[], NULL, '{"symptoms":"weakness","duration":"since today","severity":"moderate","note":"Feeling weak and tired all the time / Since today / Moderate"}'::jsonb, '2026-10-01T09:22:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('f7943cf7-8517-4d49-a9bd-31bcba9d6b55', NULL, 'en', 'Loose motion and vomiting since yesterday', '[{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'gastroenterology', 'within_48h', 'You mentioned diarrhoea and vomiting. Gastroenterology & Liver doctors treat these problems, so that is the right place to start.', ARRAY['diarrhea', 'vomiting']::text[], NULL, '{"symptoms":"diarrhoea and vomiting","duration":"since yesterday","severity":"severe","note":"Loose motion and vomiting since yesterday / Severe"}'::jsonb, '2026-10-05T14:20:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('8fb9d071-b887-494c-aa18-2db809fe2c59', NULL, 'en', 'Sudden chest pain and sweating', '[]'::jsonb, 'emergency', NULL, NULL, NULL, '{}'::text[], ARRAY['chest pain']::text[], NULL, '2026-10-22T17:51:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('b86e2694-c5f1-4053-95ec-a0f9bc2e5180', NULL, 'en', 'Numbness and tingling in my hands', '[{"question":"How long have you had this problem?","answer":"A few days"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'neurology', 'within_48h', 'You mentioned numbness or tingling. Neurology doctors treat these problems, so that is the right place to start.', ARRAY['numbness']::text[], NULL, '{"symptoms":"numbness or tingling","duration":"a few days","severity":"severe","note":"Numbness and tingling in my hands / A few days / Severe"}'::jsonb, '2026-10-12T05:41:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('97715d64-0cda-452b-8f10-fca4a872a452', NULL, 'en', 'I am pregnant and need a check-up', '[{"question":"How long have you had this problem?","answer":"A few days"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'gynecology', 'within_48h', 'You mentioned pregnancy. Gynaecology & Obstetrics doctors treat these problems, so that is the right place to start.', ARRAY['pregnancy']::text[], NULL, '{"symptoms":"pregnancy","duration":"a few days","severity":"severe","note":"I am pregnant and need a check-up / A few days / Severe"}'::jsonb, '2026-10-27T09:51:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('16dd4528-f005-4aa6-8f0f-507b2bc41ebf', NULL, 'en', 'I am pregnant and need a check-up', '[{"question":"How long have you had this problem?","answer":"A few days"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'gynecology', 'within_48h', 'You mentioned pregnancy. Gynaecology & Obstetrics doctors treat these problems, so that is the right place to start.', ARRAY['pregnancy']::text[], NULL, '{"symptoms":"pregnancy","duration":"a few days","severity":"severe","note":"I am pregnant and need a check-up / A few days / Severe"}'::jsonb, '2026-08-24T04:10:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('65fbf353-45e7-434a-8f13-686eeb3663e6', NULL, 'bn', 'তিন দিন ধরে জ্বর আর শরীর ব্যথা', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'medicine', 'within_48h', 'আপনি জ্বর ও শরীর ব্যথা-এর কথা বলেছেন। এ ধরনের সমস্যা মেডিসিন বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['fever', 'body_ache']::text[], NULL, '{"symptoms":"fever and body ache","duration":"তিন দিন","severity":"moderate","note":"তিন দিন ধরে জ্বর আর শরীর ব্যথা / মাঝারি"}'::jsonb, '2026-10-15T09:00:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('22210277-da80-43dc-b399-ac137ca1199e', NULL, 'bn', 'অনেক দিনের কাশি আর হাঁপানি', '[{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'respiratory', 'within_48h', 'আপনি কাশি-এর কথা বলেছেন। এ ধরনের সমস্যা বক্ষব্যাধি বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['cough']::text[], NULL, '{"symptoms":"cough","duration":"অনেক দিন","severity":"severe","note":"অনেক দিনের কাশি আর হাঁপানি / খুব বেশি"}'::jsonb, '2026-10-29T12:59:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('8bae3411-1d2e-4046-9bae-df9e393dcc46', NULL, 'en', 'My blood sugar is not under control', '[{"question":"How long have you had this problem?","answer":"More than a month"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'endocrinology', 'within_48h', 'You mentioned diabetes. Diabetes & Endocrinology doctors treat these problems, so that is the right place to start.', ARRAY['diabetes']::text[], NULL, '{"symptoms":"diabetes","duration":"a month","severity":"severe","note":"My blood sugar is not under control / More than a month / Severe"}'::jsonb, '2026-09-30T15:46:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('4ac8a3c6-7187-4e51-a30f-649f4c84f6d5', NULL, 'bn', 'ডায়াবেটিস নিয়ন্ত্রণে নেই', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"আজ থেকে"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'endocrinology', 'routine', 'আপনি ডায়াবেটিস-এর কথা বলেছেন। এ ধরনের সমস্যা ডায়াবেটিস ও হরমোন বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['diabetes']::text[], NULL, '{"symptoms":"diabetes","duration":"আজ থেকে","severity":"mild","note":"ডায়াবেটিস নিয়ন্ত্রণে নেই / আজ থেকে / হালকা"}'::jsonb, '2026-09-20T08:20:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('eb078e11-87ca-4210-9a67-a9823e8ebd10', NULL, 'bn', 'চোখে ঝাপসা দেখি, চোখ লাল', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"আজ থেকে"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'ophthalmology', 'routine', 'আপনি চোখের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা চক্ষু বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['eye']::text[], NULL, '{"symptoms":"eye problems","duration":"আজ থেকে","severity":"mild","note":"চোখে ঝাপসা দেখি, চোখ লাল / আজ থেকে / হালকা"}'::jsonb, '2026-11-16T12:59:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('8d49d800-8038-45fe-bb5f-7842192ab353', NULL, 'bn', 'ডায়াবেটিস নিয়ন্ত্রণে নেই', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"এক মাসের বেশি"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'endocrinology', 'within_48h', 'আপনি ডায়াবেটিস-এর কথা বলেছেন। এ ধরনের সমস্যা ডায়াবেটিস ও হরমোন বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['diabetes']::text[], NULL, '{"symptoms":"diabetes","duration":"এক মাস","severity":"severe","note":"ডায়াবেটিস নিয়ন্ত্রণে নেই / এক মাসের বেশি / খুব বেশি"}'::jsonb, '2026-10-28T04:49:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('9f0ece83-a88f-47aa-aac5-cc1cfeea80ff', NULL, 'bn', 'খুব দুর্বল লাগে, সবসময় ক্লান্ত', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"১–২ সপ্তাহ"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'medicine', 'routine', 'আপনি দুর্বলতা-এর কথা বলেছেন। এ ধরনের সমস্যা মেডিসিন বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['weakness']::text[], NULL, '{"symptoms":"weakness","duration":"2 সপ্তাহ","severity":"mild","note":"খুব দুর্বল লাগে, সবসময় ক্লান্ত / ১–২ সপ্তাহ / হালকা"}'::jsonb, '2026-11-19T15:20:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('be2694d7-a95a-4884-9066-8e606d273d7e', NULL, 'en', 'Irregular periods for a few months', '[{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'gynecology', 'routine', 'You mentioned period problems. Gynaecology & Obstetrics doctors treat these problems, so that is the right place to start.', ARRAY['periods']::text[], NULL, '{"symptoms":"period problems","duration":"a few months","severity":"moderate","note":"Irregular periods for a few months / Moderate"}'::jsonb, '2026-10-05T14:00:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('73db5389-d5c7-422c-bab5-561ae8be6124', NULL, 'en', 'Fever and body ache for three days', '[{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'medicine', 'within_48h', 'You mentioned fever and body ache. Medicine doctors treat these problems, so that is the right place to start.', ARRAY['fever', 'body_ache']::text[], NULL, '{"symptoms":"fever and body ache","duration":"three days","severity":"severe","note":"Fever and body ache for three days / Severe"}'::jsonb, '2026-11-14T03:40:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('fbd9c4ef-9080-4ed8-9fb4-248149278d15', NULL, 'bn', 'প্রেশার বেড়েছে, মাঝে মাঝে বুক ধড়ফড় করে', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"এক মাসের বেশি"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'cardiology', 'routine', 'আপনি উচ্চ রক্তচাপ ও বুক ধড়ফড়-এর কথা বলেছেন। এ ধরনের সমস্যা হৃদরোগ বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['high_bp', 'palpitations']::text[], NULL, '{"symptoms":"high blood pressure and palpitations","duration":"এক মাস","severity":"mild","note":"প্রেশার বেড়েছে, মাঝে মাঝে বুক ধড়ফড় করে / এক মাসের বেশি / হালকা"}'::jsonb, '2026-11-03T12:33:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('8d0f6977-6b07-4347-af1b-8c18f573167e', NULL, 'en', 'Lower back pain for weeks', '[{"question":"How long have you had this problem?","answer":"More than a month"},{"question":"How bad is it: mild, moderate or severe?","answer":"Severe"}]'::jsonb, 'complete', 'orthopedics', 'within_48h', 'You mentioned back pain. Orthopaedics doctors treat these problems, so that is the right place to start.', ARRAY['back_pain']::text[], NULL, '{"symptoms":"back pain","duration":"a month","severity":"severe","note":"Lower back pain for weeks / More than a month / Severe"}'::jsonb, '2026-11-14T13:17:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('14a4e38b-3f3c-42b2-83ad-291cb54fa1c9', NULL, 'en', 'My child has fever and cough', '[{"question":"How long have you had this problem?","answer":"1–2 weeks"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'pediatrics', 'within_48h', 'You described fever and cough in a child. Paediatrics doctors treat children, so that is the right place to start.', ARRAY['child', 'fever', 'cough']::text[], NULL, '{"symptoms":"fever and cough (child patient)","duration":"2 weeks","severity":"moderate","note":"My child has fever and cough / 1–2 weeks / Moderate"}'::jsonb, '2026-08-30T07:30:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('a4cdfc4d-144d-4161-9a64-11b10cd7358f', NULL, 'bn', 'হঠাৎ বুকে ব্যথা', '[]'::jsonb, 'emergency', NULL, NULL, NULL, '{}'::text[], ARRAY['বুকে ব্যথা']::text[], NULL, '2026-10-13T01:57:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('80ea723d-5d14-488b-bcbc-f570df9895f1', NULL, 'en', 'Itchy skin rash on my arms', '[{"question":"How long have you had this problem?","answer":"More than a month"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'dermatology', 'routine', 'You mentioned skin problems. Dermatology doctors treat these problems, so that is the right place to start.', ARRAY['skin']::text[], NULL, '{"symptoms":"skin problems","duration":"a month","severity":"moderate","note":"Itchy skin rash on my arms / More than a month / Moderate"}'::jsonb, '2026-10-11T12:43:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('b40f31b3-b4e8-4e87-a42b-547ce2bc990b', NULL, 'bn', 'খুব দুর্বল লাগে, সবসময় ক্লান্ত', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"১–২ সপ্তাহ"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'medicine', 'routine', 'আপনি দুর্বলতা-এর কথা বলেছেন। এ ধরনের সমস্যা মেডিসিন বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['weakness']::text[], NULL, '{"symptoms":"weakness","duration":"2 সপ্তাহ","severity":"mild","note":"খুব দুর্বল লাগে, সবসময় ক্লান্ত / ১–২ সপ্তাহ / হালকা"}'::jsonb, '2026-09-13T13:10:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('16390b45-44a3-41cc-94c4-ffd1d9b594de', NULL, 'bn', 'হাঁটুতে ব্যথা, হাঁটতে কষ্ট হয়', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"১–২ সপ্তাহ"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"হালকা"}]'::jsonb, 'complete', 'orthopedics', 'routine', 'আপনি জোড়ায় ব্যথা-এর কথা বলেছেন। এ ধরনের সমস্যা অর্থোপেডিক্স বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['joint_pain']::text[], NULL, '{"symptoms":"joint pain","duration":"2 সপ্তাহ","severity":"mild","note":"হাঁটুতে ব্যথা, হাঁটতে কষ্ট হয় / ১–২ সপ্তাহ / হালকা"}'::jsonb, '2026-09-21T07:02:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('fa188059-c890-4ca0-9d37-21af04c548da', NULL, 'bn', 'প্রেশার বেড়েছে, মাঝে মাঝে বুক ধড়ফড় করে', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"কয়েক দিন"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'cardiology', 'routine', 'আপনি উচ্চ রক্তচাপ ও বুক ধড়ফড়-এর কথা বলেছেন। এ ধরনের সমস্যা হৃদরোগ বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['high_bp', 'palpitations']::text[], NULL, '{"symptoms":"high blood pressure and palpitations","duration":"কয়েক দিন","severity":"moderate","note":"প্রেশার বেড়েছে, মাঝে মাঝে বুক ধড়ফড় করে / কয়েক দিন / মাঝারি"}'::jsonb, '2026-10-14T17:52:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('88ca5ad8-95af-40d7-9127-ef75383a7ccd', NULL, 'bn', 'চোখে ঝাপসা দেখি, চোখ লাল', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"এক মাসের বেশি"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'ophthalmology', 'within_48h', 'আপনি চোখের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা চক্ষু বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['eye']::text[], NULL, '{"symptoms":"eye problems","duration":"এক মাস","severity":"severe","note":"চোখে ঝাপসা দেখি, চোখ লাল / এক মাসের বেশি / খুব বেশি"}'::jsonb, '2026-10-10T03:36:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('97bee362-2798-4726-983a-59dae273752a', NULL, 'bn', 'হাঁটুতে ব্যথা, হাঁটতে কষ্ট হয়', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"আজ থেকে"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'orthopedics', 'routine', 'আপনি জোড়ায় ব্যথা-এর কথা বলেছেন। এ ধরনের সমস্যা অর্থোপেডিক্স বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['joint_pain']::text[], NULL, '{"symptoms":"joint pain","duration":"আজ থেকে","severity":"moderate","note":"হাঁটুতে ব্যথা, হাঁটতে কষ্ট হয় / আজ থেকে / মাঝারি"}'::jsonb, '2026-09-06T17:33:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('b142979d-a022-409c-a88d-2aac9cecb51d', NULL, 'bn', 'জন্ডিস হয়েছে, খাবারে অরুচি', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"এক মাসের বেশি"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"মাঝারি"}]'::jsonb, 'complete', 'gastroenterology', 'within_48h', 'আপনি জন্ডিস বা লিভারের সমস্যা-এর কথা বলেছেন। এ ধরনের সমস্যা পরিপাকতন্ত্র ও লিভার বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['jaundice']::text[], NULL, '{"symptoms":"jaundice or liver problem","duration":"এক মাস","severity":"moderate","note":"জন্ডিস হয়েছে, খাবারে অরুচি / এক মাসের বেশি / মাঝারি"}'::jsonb, '2026-10-12T02:44:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('d4801a43-b3a7-4ef3-9793-7f69006c5034', NULL, 'en', 'Cough for a month and wheezing at night', '[{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'respiratory', 'routine', 'You mentioned cough. Respiratory Medicine doctors treat these problems, so that is the right place to start.', ARRAY['cough']::text[], NULL, '{"symptoms":"cough","duration":"a month","severity":"moderate","note":"Cough for a month and wheezing at night / Moderate"}'::jsonb, '2026-08-29T08:42:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('4c40b514-d88d-408d-a83d-70fcd8ff37d1', NULL, 'en', 'Ear pain and blocked nose', '[{"question":"How long have you had this problem?","answer":"A few days"},{"question":"How bad is it: mild, moderate or severe?","answer":"Mild"}]'::jsonb, 'complete', 'ent', 'routine', 'You mentioned ear problems and nose or sinus problems. ENT (Ear, Nose & Throat) doctors treat these problems, so that is the right place to start.', ARRAY['ear', 'nose_sinus']::text[], NULL, '{"symptoms":"ear problems and nose or sinus problems","duration":"a few days","severity":"mild","note":"Ear pain and blocked nose / A few days / Mild"}'::jsonb, '2026-10-18T15:22:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('9b0a67b2-a03d-4a18-bb79-21bde5c497fc', NULL, 'bn', 'খাওয়ার পর পেট ব্যথা আর গ্যাস্ট্রিক', '[{"question":"কত দিন ধরে এই সমস্যা হচ্ছে?","answer":"এক মাসের বেশি"},{"question":"সমস্যাটা কতটা তীব্র: হালকা, মাঝারি, না খুব বেশি?","answer":"খুব বেশি"}]'::jsonb, 'complete', 'gastroenterology', 'within_48h', 'আপনি পেট ব্যথা ও গ্যাস্ট্রিক-এর কথা বলেছেন। এ ধরনের সমস্যা পরিপাকতন্ত্র ও লিভার বিভাগের ডাক্তাররা দেখেন, তাই সেখান থেকে শুরু করাই ভালো।', ARRAY['stomach_pain', 'acidity']::text[], NULL, '{"symptoms":"stomach pain and acidity","duration":"এক মাস","severity":"severe","note":"খাওয়ার পর পেট ব্যথা আর গ্যাস্ট্রিক / এক মাসের বেশি / খুব বেশি"}'::jsonb, '2026-11-21T10:11:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('f800833e-c113-4fe9-a144-6fb43f0746a1', NULL, 'en', 'Knee pain when climbing stairs', '[{"question":"How long have you had this problem?","answer":"Since today"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'orthopedics', 'routine', 'You mentioned joint pain. Orthopaedics doctors treat these problems, so that is the right place to start.', ARRAY['joint_pain']::text[], NULL, '{"symptoms":"joint pain","duration":"since today","severity":"moderate","note":"Knee pain when climbing stairs / Since today / Moderate"}'::jsonb, '2026-09-30T06:27:00.000Z');
+INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at) VALUES ('53972135-3ff7-4c05-b276-69aa9c24f6b8', NULL, 'en', 'Thyroid problem and weight gain', '[{"question":"How long have you had this problem?","answer":"More than a month"},{"question":"How bad is it: mild, moderate or severe?","answer":"Moderate"}]'::jsonb, 'complete', 'endocrinology', 'routine', 'You mentioned thyroid problems. Diabetes & Endocrinology doctors treat these problems, so that is the right place to start.', ARRAY['thyroid']::text[], NULL, '{"symptoms":"thyroid problems","duration":"a month","severity":"moderate","note":"Thyroid problem and weight gain / More than a month / Moderate"}'::jsonb, '2026-11-20T09:56:00.000Z');
+
+-- Appointments (250)
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('a8dcb9d5-8d5d-49c5-b2d9-4c1bc6213a6e', 'f10a64dc-530a-447a-b6be-926ea3b7a4ba', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-08-23', '17:12', '17:24', 2, 'no_show', 'online', NULL, '959d7d9b-5066-4fe3-a6a9-84485618508c', NULL, NULL, NULL, '2026-08-23T05:38:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('48bc137c-393f-4591-b23b-222a6176dd20', 'b9ba2820-575b-455b-b793-d56e9284827b', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-08-23', '18:36', '18:48', 9, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-23T12:36:00.000Z', '2026-08-23T07:13:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('ba065760-fb8d-4141-b3cb-94f3d51b5497', 'be9a2331-cfc4-4be3-8812-13b93b85f8c2', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-08-23', '19:36', '19:48', 14, 'cancelled', 'phone', NULL, NULL, NULL, 'patient', NULL, '2026-08-23T10:41:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('2a267923-cd82-4b50-bf88-726737604911', '370bf7a0-4d7e-4c00-baa9-163db26cda10', 'cde5c4ba-9ee8-48b3-853b-6060216dc72f', '2026-08-23', '10:30', '10:45', 3, 'seen', 'online', NULL, 'bd0636f7-e22a-4464-a6e5-bc9218cc1ee4', NULL, NULL, '2026-08-23T04:30:00.000Z', '2026-08-23T08:45:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('f48efb2b-84d2-43e8-ae0f-57a1dbdef646', '56ebd162-30ad-47a0-952f-a975c90712ad', 'cde5c4ba-9ee8-48b3-853b-6060216dc72f', '2026-08-23', '12:15', '12:30', 10, 'seen', 'online', NULL, '96e1b88d-d63b-4799-8f75-1ef1d4e4f274', NULL, NULL, '2026-08-23T06:15:00.000Z', '2026-08-23T04:31:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('71a1c819-92e3-4b2f-8d9d-569678f2b5b2', '20fc0210-19e1-455a-8900-122cfc3133f4', '937766e2-c060-4f5a-8923-48d5ece2bce7', '2026-08-23', '12:00', '12:10', 13, 'seen', 'online', NULL, '4892e484-9e9b-42f2-acc5-f9a760f8b9a0', NULL, NULL, '2026-08-23T06:00:00.000Z', '2026-08-23T02:45:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('6bbc768d-53c4-4b49-8da0-eb1bd72b2c98', 'd3c32d1a-5eec-4d25-a18e-fafb4efbb30d', '937766e2-c060-4f5a-8923-48d5ece2bce7', '2026-08-23', '12:20', '12:30', 15, 'seen', 'online', NULL, 'a0a98c59-31e0-4967-9491-f1d23f0cb781', NULL, NULL, '2026-08-23T06:20:00.000Z', '2026-08-23T15:06:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('bd62a88a-cb19-447d-8b67-65247d7dcb34', '3a996823-3d85-47c8-add9-af5370163c73', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', '2026-08-23', '10:12', '10:24', 2, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-23T04:12:00.000Z', '2026-08-23T09:59:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('ca2cf81c-e366-42a6-bb90-82c456d78f71', '79b2baa7-843a-4882-8028-bafe8d65b7fb', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', '2026-08-23', '12:48', '13:00', 15, 'seen', 'online', NULL, '3f2b93d5-c95c-40bb-ae05-a596ec63eabe', NULL, NULL, '2026-08-23T06:48:00.000Z', '2026-08-23T06:47:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('171b6518-779d-431f-843e-2f7aa55dc07c', '7458ebe6-f9d8-4b5e-a8f1-6fcd44ac59a7', '324b840d-1cc8-4775-aa9a-895634368637', '2026-08-23', '18:20', '18:30', 9, 'no_show', 'online', NULL, '0d6d6868-1862-4b47-956a-bf8f81931e94', NULL, NULL, NULL, '2026-08-23T05:42:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('bd8d991a-87be-48b5-8213-09814a473b85', '3b2204b2-947b-411e-a52e-941e6ca2eb9e', '324b840d-1cc8-4775-aa9a-895634368637', '2026-08-23', '18:30', '18:40', 10, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-23T12:30:00.000Z', '2026-08-23T10:52:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('83b1dbec-3eb7-4f00-9d1f-0aaa0c002045', 'f10a64dc-530a-447a-b6be-926ea3b7a4ba', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-08-23', '17:00', '17:12', 1, 'seen', 'online', NULL, '884b5774-3642-4b53-845a-54ffa4394a9a', NULL, NULL, '2026-08-23T11:00:00.000Z', '2026-08-23T15:47:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('6faab410-bae5-44ee-9eed-f4744920ea62', '4b6a73d8-1276-4257-a9ae-abdf83eede10', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-08-23', '19:24', '19:36', 13, 'seen', 'online', NULL, '025ffecf-b3d7-4671-9367-5565dc0b22a2', NULL, NULL, '2026-08-23T13:24:00.000Z', '2026-08-23T05:59:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('47f542ee-6242-4bbd-bdc9-c8b66f2375d4', 'd9dd994c-5932-4a48-8349-63f8f01718ce', '8f652753-cdde-4c22-993a-26b8bba0fa74', '2026-08-23', '17:00', '17:15', 1, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-08-23T11:00:00.000Z', '2026-08-23T11:57:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('da9eb154-cf13-4a83-8db7-c8f4fa74722c', '4b6a73d8-1276-4257-a9ae-abdf83eede10', '8f652753-cdde-4c22-993a-26b8bba0fa74', '2026-08-23', '17:15', '17:30', 2, 'seen', 'online', NULL, 'd0a989c4-3c7b-4ea2-9e2c-58cbe34b69fd', NULL, NULL, '2026-08-23T11:15:00.000Z', '2026-08-23T09:01:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('b86ad05c-c673-4f4b-84f5-491649a4520b', '921e29e7-4f55-4dda-81be-334126e79377', '6cb7ff7e-94fa-4242-9469-5ae23b900dfe', '2026-08-23', '18:00', '18:15', 1, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-23T12:00:00.000Z', '2026-08-23T04:55:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('3c17a406-188f-49b6-8c60-b26ccf132854', 'f34c1b22-e657-459a-9c02-4e39b61ca0e1', '6cb7ff7e-94fa-4242-9469-5ae23b900dfe', '2026-08-23', '19:00', '19:15', 5, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-23T13:00:00.000Z', '2026-08-23T11:41:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('adac374a-18dc-4fad-9fa6-1f44587f60f5', '7536f1db-4016-4192-a129-4a64283e92e6', '6cb7ff7e-94fa-4242-9469-5ae23b900dfe', '2026-08-23', '20:30', '20:45', 11, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-23T14:30:00.000Z', '2026-08-23T08:43:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('585f8085-3f5d-483f-b235-eac6ab79c942', '339e30a1-0023-4663-b556-7dca67367e8f', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-08-24', '12:30', '12:40', 16, 'seen', 'online', NULL, '7cf438d3-1418-4a4c-a189-3ed1e86b4b31', NULL, NULL, '2026-08-24T06:30:00.000Z', '2026-08-24T02:11:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('24c9e9e1-caf2-4a1f-a54b-4cc238b509a0', '7aecad99-e228-46a9-8bc7-26ea03783633', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-08-24', '17:12', '17:24', 2, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-24T11:12:00.000Z', '2026-08-24T03:04:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('5526f586-14da-46fd-8d8e-6383df964f7e', 'b9ba2820-575b-455b-b793-d56e9284827b', '190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', '2026-08-24', '19:00', '19:15', 5, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-24T13:00:00.000Z', '2026-08-23T08:38:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('63e3bf84-ee9b-42dc-afe6-d542a64e00a7', '2e57e115-856e-45db-b73a-0bbdf518e360', '190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', '2026-08-24', '19:45', '20:00', 8, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-24T13:45:00.000Z', '2026-08-24T15:09:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('a6b60100-4e5b-4682-a47e-7554fbff6c6d', 'f10a64dc-530a-447a-b6be-926ea3b7a4ba', 'a7973606-e277-411f-a0c3-94f66f76067c', '2026-08-24', '11:15', '11:30', 6, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-24T05:15:00.000Z', '2026-08-24T12:17:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('58b3ad76-07b3-491a-bfa1-24ddd51567a0', '86c9276c-684b-479b-947b-6607b6d86c71', '6e33331d-c111-4e1f-90e7-5edce5f2c513', '2026-08-24', '17:30', '17:42', 1, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-24T11:30:00.000Z', '2026-08-24T08:49:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('19cef595-dbcd-4d26-9836-1eec0b5f7faf', 'd9dd994c-5932-4a48-8349-63f8f01718ce', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-24', '17:36', '17:48', 9, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-24T11:36:00.000Z', '2026-08-23T12:21:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('b12fe410-a23e-4352-b875-124777c4fafe', '7e6f3489-de55-441f-87b2-c9f535c939e3', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-24', '18:12', '18:24', 12, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-24T12:12:00.000Z', '2026-08-24T08:32:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('6af095f5-864d-4f25-8ee5-5722478803c1', '7aecad99-e228-46a9-8bc7-26ea03783633', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-24', '19:48', '20:00', 20, 'seen', 'online', NULL, 'a828ce62-30a7-412d-80e0-2be78d60f9d8', NULL, NULL, '2026-08-24T13:48:00.000Z', '2026-08-24T14:45:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('1353b95a-a237-41ba-ad4c-d618b98aa11a', '038656ce-769c-41b0-af93-69db2307756a', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-08-24', '12:00', '12:10', 13, 'cancelled', 'walk_in', NULL, NULL, NULL, 'patient', NULL, '2026-08-24T04:35:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('8e410420-812c-4d6a-aa6a-3d246c1c8219', 'b9ba2820-575b-455b-b793-d56e9284827b', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-08-24', '12:20', '12:30', 15, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-24T06:20:00.000Z', '2026-08-24T05:14:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('a40faa31-2b8b-4cdd-bb56-a2883f0ae78a', '0ccf4637-52f0-48be-9f6c-2b959b955cc2', '934d9e7d-7a3e-447a-b995-631ffb3b5e88', '2026-08-24', '17:50', '18:00', 6, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-24T11:50:00.000Z', '2026-08-23T13:48:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('797f6806-7e44-47c2-928a-e3105f7500a7', '0dd817c7-12b9-4b2f-9f84-6034cf61275b', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-08-24', '16:10', '16:20', 2, 'cancelled', 'online', NULL, NULL, NULL, 'patient', NULL, '2026-08-24T03:39:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d3707311-fd90-45e2-b498-37d93e099520', 'f10a64dc-530a-447a-b6be-926ea3b7a4ba', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-08-24', '18:10', '18:20', 14, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-24T12:10:00.000Z', '2026-08-23T04:08:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('1b4f2996-5ad9-4901-a11a-6c1b26c6945f', '47704834-9390-4f76-bfb5-c590c075524a', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-08-25', '17:36', '17:48', 4, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-25T11:36:00.000Z', '2026-08-24T12:06:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('3cb2a7b6-3cf4-4727-b7f7-b6b6361914aa', '20fc0210-19e1-455a-8900-122cfc3133f4', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-08-25', '19:12', '19:24', 12, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-25T13:12:00.000Z', '2026-08-24T05:29:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('88b7e32b-b7d3-43ad-9f53-a79846a539d1', 'd9552cab-bc75-457f-a968-889795cfa1cc', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-08-25', '19:36', '19:48', 14, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-08-25T13:36:00.000Z', '2026-08-25T04:47:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('0700a5a1-4cbc-4721-9655-00e0189dba0e', '38b3ea1a-7c3c-4c56-acb1-dc62d519ab99', '937766e2-c060-4f5a-8923-48d5ece2bce7', '2026-08-25', '10:20', '10:30', 3, 'seen', 'online', NULL, '16662af6-99d0-4243-bcf8-23f5ac656363', NULL, NULL, '2026-08-25T04:20:00.000Z', '2026-08-23T02:17:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('baf3b45e-1b64-41b8-bb4c-12f596e52998', 'f2204fde-2b8e-4280-9ca0-90f6af73de45', '937766e2-c060-4f5a-8923-48d5ece2bce7', '2026-08-25', '12:00', '12:10', 13, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-25T06:00:00.000Z', '2026-08-23T15:01:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('6777777b-81dc-4b4a-814b-5dad1abd3354', 'a05a8e2a-deb0-4992-8620-4e2d8b9b5c3b', '449686b1-9efa-4db4-8a4f-476934c3bf6b', '2026-08-25', '17:15', '17:30', 6, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-25T11:15:00.000Z', '2026-08-23T03:31:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d0b5ef83-43d0-4d86-a8d4-d0924da683d6', '84ac9969-8bdd-4ab4-83a2-5f13ade2e838', '449686b1-9efa-4db4-8a4f-476934c3bf6b', '2026-08-25', '19:15', '19:30', 14, 'cancelled', 'online', NULL, NULL, NULL, 'patient', NULL, '2026-08-23T09:49:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('5fcedfc3-073b-4ebc-ab6f-143d9b67332a', '038656ce-769c-41b0-af93-69db2307756a', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', '2026-08-25', '10:12', '10:24', 2, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-25T04:12:00.000Z', '2026-08-23T03:27:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('5543b194-0781-4eb4-a8cf-335cdd0eac4c', '2cc2a4bc-eb02-4b32-83c5-124a73004b1f', '324b840d-1cc8-4775-aa9a-895634368637', '2026-08-25', '17:00', '17:10', 1, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-08-25T11:00:00.000Z', '2026-08-25T05:51:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('dc0d8acc-2bc4-44bf-a47a-b2029e4eb000', '47704834-9390-4f76-bfb5-c590c075524a', '324b840d-1cc8-4775-aa9a-895634368637', '2026-08-25', '17:50', '18:00', 6, 'no_show', 'online', NULL, 'e2914d62-9749-4d30-a9d9-806455f3d188', NULL, NULL, NULL, '2026-08-25T09:58:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('fb6b2e3a-bc1f-470e-ba07-56804b21465d', 'f5ae2167-bf4c-4983-805c-bc57b1c80890', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-08-25', '17:24', '17:36', 3, 'cancelled', 'phone', NULL, NULL, NULL, 'patient', NULL, '2026-08-23T07:22:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('01e3bc0e-7841-4d87-af40-dd25f5617eb4', 'ab279882-d03b-49f6-8a41-ec3ebc5dfaa9', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-08-25', '19:12', '19:24', 12, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-25T13:12:00.000Z', '2026-08-23T02:16:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('cbed8d33-67f8-4a02-b867-4f88bf5776d6', 'dd081c10-ef07-4ebd-9758-23c70d86ae9f', '29043842-761d-4848-8db4-9790e81d243b', '2026-08-25', '11:45', '12:00', 8, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-25T05:45:00.000Z', '2026-08-23T10:26:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d3906f5a-e64b-4b64-bbfd-ef528e5de9ad', '56ebd162-30ad-47a0-952f-a975c90712ad', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-08-26', '12:20', '12:30', 15, 'seen', 'online', NULL, '7df78877-16a3-4226-828d-f47f341d2050', NULL, NULL, '2026-08-26T06:20:00.000Z', '2026-08-25T14:03:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('b586cc52-6911-42f9-b85a-81907fcb7508', '0ccf4637-52f0-48be-9f6c-2b959b955cc2', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-08-26', '12:50', '13:00', 18, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-26T06:50:00.000Z', '2026-08-25T04:28:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('eebe149e-7edf-45b8-a88c-99cc47153690', '18531fb0-975d-49a9-902c-494c10439df0', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-08-26', '18:24', '18:36', 8, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-26T12:24:00.000Z', '2026-08-26T11:05:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('4f2ec76d-1d41-4675-9f02-7a1064551830', 'b4fad5d8-e32a-422b-9619-0cd718d096e8', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-08-26', '20:24', '20:36', 18, 'seen', 'online', NULL, '578dc3f8-51d3-4490-9de8-1a16640816fb', NULL, NULL, '2026-08-26T14:24:00.000Z', '2026-08-25T10:28:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('63d8bc65-433b-4a8d-be03-46357c14cf0c', 'fc3307d4-2e4c-4d69-a343-d46751ce31e9', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-08-26', '20:36', '20:48', 19, 'seen', 'online', NULL, 'a4336b17-2a9e-402e-8fec-25c74444e847', NULL, NULL, '2026-08-26T14:36:00.000Z', '2026-08-24T08:44:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('a3f141f1-9ef1-4ba5-832e-57c5f5b085b3', '7ae76e07-b643-492f-8267-78d86ca0b9ee', '190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', '2026-08-26', '18:00', '18:15', 1, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-26T12:00:00.000Z', '2026-08-23T05:04:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('ae783634-c05d-49b7-ae8a-d48c602a2b54', '921e29e7-4f55-4dda-81be-334126e79377', '190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', '2026-08-26', '20:00', '20:15', 9, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-26T14:00:00.000Z', '2026-08-26T07:59:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('ca86a063-e230-4513-99ef-601db2751777', '4ef7cf1b-c4a3-4f4b-bd1b-4c8d6cfcc87b', '190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', '2026-08-26', '20:15', '20:30', 10, 'seen', 'online', NULL, '35d4c1fe-9934-42cd-89a9-0869aab1893a', NULL, NULL, '2026-08-26T14:15:00.000Z', '2026-08-24T13:29:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('888395d1-0b99-47e8-9e3d-447123f13bce', 'a6bbcc23-a745-4694-bf5e-e05ba9f646b8', '57dbcfce-ad0e-4c98-8d2f-78b26ae72471', '2026-08-26', '17:45', '18:00', 4, 'no_show', 'phone', NULL, NULL, NULL, NULL, NULL, '2026-08-26T07:42:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('fa217437-4d78-4f54-8008-a1f33b6e6153', '370bf7a0-4d7e-4c00-baa9-163db26cda10', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-26', '16:24', '16:36', 3, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-26T10:24:00.000Z', '2026-08-23T12:01:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('2d220f9a-9794-43a0-a3f8-0b141b187d94', '6c2cd65e-e3d4-4472-bb94-376ffaf10385', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-26', '17:00', '17:12', 6, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-08-26T11:00:00.000Z', '2026-08-26T08:33:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('3a6125e8-6b56-4c5a-a664-92c4f37f0b9a', '370bf7a0-4d7e-4c00-baa9-163db26cda10', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-26', '17:36', '17:48', 9, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-26T11:36:00.000Z', '2026-08-23T14:24:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('87bb25e6-1a08-45c9-b120-2e36efdcf75f', 'b4fad5d8-e32a-422b-9619-0cd718d096e8', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-26', '18:24', '18:36', 13, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-26T12:24:00.000Z', '2026-08-24T07:17:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('5d9200d5-1e4c-473a-9aa0-98b999f26d0d', '79b2baa7-843a-4882-8028-bafe8d65b7fb', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-26', '19:36', '19:48', 19, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-26T13:36:00.000Z', '2026-08-25T14:02:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('a74927f0-51c9-43c0-b447-d15a422c246e', 'fc3307d4-2e4c-4d69-a343-d46751ce31e9', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-08-26', '10:30', '10:40', 4, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-26T04:30:00.000Z', '2026-08-24T13:04:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('ee296abc-eaca-4641-8b88-4614279cada0', 'cbdb7fd4-324a-4498-9783-903beb64319c', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-08-26', '10:50', '11:00', 6, 'seen', 'online', NULL, '7fa5d9fd-2a44-436c-ad68-212f5334a744', NULL, NULL, '2026-08-26T04:50:00.000Z', '2026-08-25T04:42:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('e81a8fd7-1647-444b-8ecf-8a2455d152e1', '90f63dda-938e-450a-a040-33d2c0590b47', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-08-26', '11:50', '12:00', 12, 'seen', 'online', NULL, 'ed794a3b-6794-49fe-bfe4-758f4d1c24af', NULL, NULL, '2026-08-26T05:50:00.000Z', '2026-08-23T10:46:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('412aa904-02d9-4875-84b4-f8936566f495', 'f2204fde-2b8e-4280-9ca0-90f6af73de45', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-08-26', '12:30', '12:40', 16, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-26T06:30:00.000Z', '2026-08-24T07:31:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('1a2acfb8-c49b-483a-8cc3-d620f0f20704', '787c47d8-c233-4b81-916f-98c17a546362', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-08-26', '12:40', '12:50', 17, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-26T06:40:00.000Z', '2026-08-25T11:50:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('620bf8f1-9496-4dc5-931f-e06ede5cc28c', 'f58cc255-0ccf-44bc-a5ef-0cb126bb5438', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-08-26', '12:50', '13:00', 18, 'seen', 'online', NULL, '76e43a17-6e61-464d-a5df-12f2874376d2', NULL, NULL, '2026-08-26T06:50:00.000Z', '2026-08-26T14:43:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('3408d12c-d641-48e3-a4de-cc4112e2ae3e', '3bd6a7a1-13d8-4a89-9dd2-c144da1014a5', '8f652753-cdde-4c22-993a-26b8bba0fa74', '2026-08-26', '18:00', '18:15', 5, 'seen', 'online', NULL, '405c9fcf-8a05-4a18-9ec4-4d5546bfdd85', NULL, NULL, '2026-08-26T12:00:00.000Z', '2026-08-25T07:42:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('898b78db-a1e2-4724-ba0a-08cc22a6d47a', '3b2204b2-947b-411e-a52e-941e6ca2eb9e', '8f652753-cdde-4c22-993a-26b8bba0fa74', '2026-08-26', '18:15', '18:30', 6, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-26T12:15:00.000Z', '2026-08-26T08:24:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('6df7eb24-5213-467c-8bf5-90fd00e213f0', '7536f1db-4016-4192-a129-4a64283e92e6', '8f652753-cdde-4c22-993a-26b8bba0fa74', '2026-08-26', '18:45', '19:00', 8, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-26T12:45:00.000Z', '2026-08-25T06:25:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d5ca52f9-5e42-4861-9e3b-1b1467eccd94', '2ca5bae2-8af3-4a25-8704-6c8df81081ff', '8f652753-cdde-4c22-993a-26b8bba0fa74', '2026-08-26', '19:00', '19:15', 9, 'seen', 'online', NULL, '97dd9e77-c82d-4ad2-a2c8-20e3e898149f', NULL, NULL, '2026-08-26T13:00:00.000Z', '2026-08-24T06:01:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('8f115048-0279-4b8f-b893-8477024b5f0c', 'b4fad5d8-e32a-422b-9619-0cd718d096e8', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-08-26', '16:20', '16:30', 3, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-26T10:20:00.000Z', '2026-08-24T07:15:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('13777f07-9aa5-4615-81a6-31938bba8b1f', '3a996823-3d85-47c8-add9-af5370163c73', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-08-27', '20:36', '20:48', 19, 'seen', 'online', NULL, 'c2636ba9-f858-45c3-b81d-f6929fa2497e', NULL, NULL, '2026-08-27T14:36:00.000Z', '2026-08-26T11:54:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('658a0d8e-918d-4216-bfd8-6376eb19b838', 'd3c32d1a-5eec-4d25-a18e-fafb4efbb30d', '6e33331d-c111-4e1f-90e7-5edce5f2c513', '2026-08-27', '18:06', '18:18', 14, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-27T12:06:00.000Z', '2026-08-23T13:52:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('b26b3344-ac7b-47e6-9ab1-f8e2b45acf7c', 'f10a64dc-530a-447a-b6be-926ea3b7a4ba', '449686b1-9efa-4db4-8a4f-476934c3bf6b', '2026-08-27', '17:45', '18:00', 8, 'no_show', 'online', NULL, '11b05067-80b6-4f50-a694-7c1a1b4d29f9', NULL, NULL, NULL, '2026-08-24T15:13:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('abdfd93c-e917-43e7-80b9-7e8ec75e426e', '0dd817c7-12b9-4b2f-9f84-6034cf61275b', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', '2026-08-27', '11:12', '11:24', 7, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-27T05:12:00.000Z', '2026-08-27T14:46:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('3c6bd96c-832d-42f2-89ff-c41c9dcf736b', '87954318-9acb-4272-a29b-c8c3c95f0a42', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', '2026-08-27', '12:36', '12:48', 14, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-27T06:36:00.000Z', '2026-08-27T05:40:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('27fd830b-b558-4400-a597-65631f60e9ec', 'e1bb6c96-e517-4419-b09d-82d24c760df4', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-08-27', '18:00', '18:12', 6, 'seen', 'online', NULL, '12363a26-6939-4a80-bb90-27c96568a7dd', NULL, NULL, '2026-08-27T12:00:00.000Z', '2026-08-25T02:35:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('be97a029-fd6a-4ad6-9910-2e5ad6aeac25', '56ebd162-30ad-47a0-952f-a975c90712ad', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-08-27', '19:12', '19:24', 12, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-27T13:12:00.000Z', '2026-08-24T06:55:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('b569d471-bacc-4990-90b7-c92a86c4189b', '95b7fa03-ec69-4e0e-a56e-240ca9594ccb', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-08-27', '19:24', '19:36', 13, 'no_show', 'phone', NULL, NULL, NULL, NULL, NULL, '2026-08-23T08:46:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('ed5263ac-f3e1-4162-8d1b-50a34e100033', 'ac098341-eb9f-411e-b8d5-bab91f031533', '29043842-761d-4848-8db4-9790e81d243b', '2026-08-27', '11:45', '12:00', 8, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-27T05:45:00.000Z', '2026-08-23T12:04:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('33ee919f-a6c8-4789-afaa-870a519c9b81', 'a69c803c-7a93-4d46-a68b-6346c8e26384', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-08-29', '10:10', '10:20', 2, 'no_show', 'online', NULL, NULL, NULL, NULL, NULL, '2026-08-28T09:22:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('edf3f563-38a4-4f94-a31f-2d83cbd54525', '5a061fc9-b0f3-47a3-a623-feae44084767', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-08-29', '10:40', '10:50', 5, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-29T04:40:00.000Z', '2026-08-28T05:31:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('8cb61a1a-966e-4b5a-9a3d-5ecb3ca630d7', 'eb8ee420-1dcd-443e-8ba6-747063076c4a', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-08-29', '11:50', '12:00', 12, 'seen', 'online', NULL, 'c37b38f5-0a61-4b48-bbf3-6f437ba60f96', NULL, NULL, '2026-08-29T05:50:00.000Z', '2026-08-29T12:35:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('fa9c5319-1f80-46a7-bb3a-307101c696b7', 'f4914912-3ce1-41b9-bd24-e2dbf85b0a32', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-08-29', '12:00', '12:10', 13, 'no_show', 'online', NULL, NULL, NULL, NULL, NULL, '2026-08-29T13:38:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('77f507d4-d111-4400-ab25-7d0c4902867e', 'a6bbcc23-a745-4694-bf5e-e05ba9f646b8', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-08-29', '12:20', '12:30', 15, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-29T06:20:00.000Z', '2026-08-28T02:24:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('e8014ef3-ecd1-4943-932a-07d6ac85e19a', 'e587389b-864b-46f0-98b7-45ab8f1e0255', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-08-29', '19:48', '20:00', 15, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-29T13:48:00.000Z', '2026-08-23T04:47:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('87bd3cff-3dd6-4e78-ac84-be3b91495d45', '20fc0210-19e1-455a-8900-122cfc3133f4', '190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', '2026-08-29', '20:15', '20:30', 10, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-29T14:15:00.000Z', '2026-08-29T06:34:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('7f9fa084-7ae2-417f-86b5-11d2e14d6185', '20fc0210-19e1-455a-8900-122cfc3133f4', '190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', '2026-08-29', '20:30', '20:45', 11, 'seen', 'online', NULL, 'a53fe650-49a8-4e30-9bea-7caeee363f61', NULL, NULL, '2026-08-29T14:30:00.000Z', '2026-08-24T03:55:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('457eadf4-850f-4711-8995-2a7c8b8ac61d', '88fb6134-3337-4fac-8fc3-444e339a952c', 'a7973606-e277-411f-a0c3-94f66f76067c', '2026-08-29', '12:45', '13:00', 12, 'seen', 'online', NULL, 'b5d5ef39-f890-495e-a254-eadf3905f96c', NULL, NULL, '2026-08-29T06:45:00.000Z', '2026-08-25T12:35:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('909562cf-df17-432c-bf20-a58912db8859', '2cc2a4bc-eb02-4b32-83c5-124a73004b1f', '6e33331d-c111-4e1f-90e7-5edce5f2c513', '2026-08-29', '17:42', '17:54', 2, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-29T11:42:00.000Z', '2026-08-27T03:26:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('16817bb3-b3bd-439b-8681-c21154073a0e', '7ae76e07-b643-492f-8267-78d86ca0b9ee', '449686b1-9efa-4db4-8a4f-476934c3bf6b', '2026-08-29', '16:30', '16:45', 3, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-29T10:30:00.000Z', '2026-08-27T07:49:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('a0f22d41-9c56-4da8-9e07-cbf3c2724d67', 'd537e3c1-68b9-4cea-9cd0-dfd2ea1fa061', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-29', '16:36', '16:48', 4, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-08-29T10:36:00.000Z', '2026-08-29T11:17:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('8eeb8d92-02e8-4b19-9b0f-3f078e97cbf1', '78434abb-47c8-4fc8-b73b-586f43ed7738', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-29', '16:48', '17:00', 5, 'seen', 'online', NULL, '2bc24bdc-a029-42ef-86de-94b56256bf2f', NULL, NULL, '2026-08-29T10:48:00.000Z', '2026-08-28T14:32:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('2c76917a-7ceb-465d-912b-9f598d263450', 'e880057b-7e1b-495c-8253-a2b066049a61', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-29', '18:12', '18:24', 12, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-29T12:12:00.000Z', '2026-08-29T13:53:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('07f455b4-ff56-4089-be3c-44a97276ab87', '2be32e0d-a2af-42a3-ae96-f4fee9073830', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-29', '18:48', '19:00', 15, 'seen', 'online', NULL, '00819121-6702-41de-ad57-db0e872a7706', NULL, NULL, '2026-08-29T12:48:00.000Z', '2026-08-28T03:31:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('5b7ffed8-8a6a-47d3-b923-e9f1f71b97b4', 'de537813-68e4-4394-9c10-2ae8d9fef2b8', '324b840d-1cc8-4775-aa9a-895634368637', '2026-08-29', '19:00', '19:10', 13, 'no_show', 'online', NULL, NULL, NULL, NULL, NULL, '2026-08-24T11:09:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d7b7a6da-ca4e-4a61-95e0-2d578f19f0ad', '787c47d8-c233-4b81-916f-98c17a546362', '324b840d-1cc8-4775-aa9a-895634368637', '2026-08-29', '19:40', '19:50', 17, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-29T13:40:00.000Z', '2026-08-26T10:05:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('a9ece734-69ea-4aef-bd11-9ff9e554c1b3', '7c28a20f-42bb-4c13-a9bf-df4a7bd66c40', '934d9e7d-7a3e-447a-b995-631ffb3b5e88', '2026-08-29', '17:30', '17:40', 4, 'seen', 'online', NULL, '48f71385-d4e0-4883-9172-89f57c1648db', NULL, NULL, '2026-08-29T11:30:00.000Z', '2026-08-24T14:17:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('32875caf-ba7c-43d0-bd5f-d9ad4fbaeb6b', '8c5728d0-91f3-469b-b67c-bfb007b892e6', '29043842-761d-4848-8db4-9790e81d243b', '2026-08-29', '11:30', '11:45', 7, 'no_show', 'phone', NULL, NULL, NULL, NULL, NULL, '2026-08-27T03:40:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('2fddc279-6645-4525-b354-071c56ddd5ac', '5873964f-1883-41ae-8729-c015f0f56907', '29043842-761d-4848-8db4-9790e81d243b', '2026-08-29', '12:30', '12:45', 11, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-29T06:30:00.000Z', '2026-08-29T13:47:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('89e4f1a3-a8df-4c1a-a747-2be0860845ec', '87954318-9acb-4272-a29b-c8c3c95f0a42', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-08-29', '18:00', '18:10', 13, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-08-29T12:00:00.000Z', '2026-08-29T05:19:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('c8eac468-5e45-43c7-9433-d10a4edc55da', 'f58cc255-0ccf-44bc-a5ef-0cb126bb5438', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-08-29', '18:50', '19:00', 18, 'seen', 'online', NULL, 'fd2173d1-06c4-4be1-a817-15f072d15431', NULL, NULL, '2026-08-29T12:50:00.000Z', '2026-08-29T15:56:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('c3a023c4-f520-4a27-90b2-416d988f8787', 'd537e3c1-68b9-4cea-9cd0-dfd2ea1fa061', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-08-30', '17:24', '17:36', 3, 'cancelled', 'walk_in', NULL, NULL, NULL, 'staff', NULL, '2026-08-30T11:51:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('1679f8f5-4262-4083-83a3-139ee7af4beb', '4c6a39c2-67e1-4ecd-8ce2-242df82137ba', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-08-30', '18:00', '18:12', 6, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-30T12:00:00.000Z', '2026-08-28T15:06:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('cd08dd96-baab-4e6c-b8d5-d01d80871013', 'f4914912-3ce1-41b9-bd24-e2dbf85b0a32', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-08-30', '19:36', '19:48', 14, 'seen', 'online', NULL, 'a41a40f9-c1d6-4ce9-973a-747e6ad1dcc2', NULL, NULL, '2026-08-30T13:36:00.000Z', '2026-08-28T06:19:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('61d9f7ae-aa79-464b-be5b-fe78194e4e85', '5a061fc9-b0f3-47a3-a623-feae44084767', 'cde5c4ba-9ee8-48b3-853b-6060216dc72f', '2026-08-30', '10:30', '10:45', 3, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-30T04:30:00.000Z', '2026-08-27T12:46:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d871ad07-9a95-4880-886f-15e62a665462', '86c9276c-684b-479b-947b-6607b6d86c71', '937766e2-c060-4f5a-8923-48d5ece2bce7', '2026-08-30', '10:40', '10:50', 5, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-30T04:40:00.000Z', '2026-08-26T07:05:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('81f0711c-a900-4215-a5db-7d125ca28b2f', 'f2204fde-2b8e-4280-9ca0-90f6af73de45', '937766e2-c060-4f5a-8923-48d5ece2bce7', '2026-08-30', '10:50', '11:00', 6, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-30T04:50:00.000Z', '2026-08-28T09:24:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('32da7de7-3320-42be-93d9-91d2609cc72c', 'd9dd994c-5932-4a48-8349-63f8f01718ce', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', '2026-08-30', '11:24', '11:36', 8, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-30T05:24:00.000Z', '2026-08-29T12:11:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('9314adf8-e1f4-48fb-9f71-2122e141d3fe', '4c9c6594-9f6a-4ac5-a566-2d9eefc780e8', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', '2026-08-30', '12:24', '12:36', 13, 'seen', 'online', NULL, 'd9983a68-a3b1-4e04-9abb-0c3b8fd7f895', NULL, NULL, '2026-08-30T06:24:00.000Z', '2026-08-29T03:51:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('e092c251-e303-49fc-b304-608089a33d4c', '038656ce-769c-41b0-af93-69db2307756a', '324b840d-1cc8-4775-aa9a-895634368637', '2026-08-30', '18:30', '18:40', 10, 'seen', 'online', NULL, 'fc82ece8-c0c9-41a7-a989-cc961254a89f', NULL, NULL, '2026-08-30T12:30:00.000Z', '2026-08-30T03:47:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('09ac1f8d-c1a2-494a-94b1-41d653fec999', '0459c27e-fcfd-4d8f-9326-2f91e6531ad8', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-08-30', '17:12', '17:24', 2, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-30T11:12:00.000Z', '2026-08-25T14:27:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('dcc90a87-019d-4426-a515-233bb2ce9689', '5873964f-1883-41ae-8729-c015f0f56907', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-08-30', '17:24', '17:36', 3, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-30T11:24:00.000Z', '2026-08-30T14:35:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('14175774-3f3d-4360-8d88-8344b3010e02', '7536f1db-4016-4192-a129-4a64283e92e6', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-08-30', '18:36', '18:48', 9, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-08-30T12:36:00.000Z', '2026-08-30T10:00:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('88c4cab2-9825-44fa-ac30-6565c7b7bda0', '86c9276c-684b-479b-947b-6607b6d86c71', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-08-30', '18:48', '19:00', 10, 'no_show', 'online', NULL, 'd147188d-f013-4818-a41c-3963c5f14478', NULL, NULL, NULL, '2026-08-26T12:43:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('94cc8435-2e55-47a9-ba9a-e36b9a9ee84e', 'd759e7a6-84f8-4500-84c5-3d943e0e0741', '6cb7ff7e-94fa-4242-9469-5ae23b900dfe', '2026-08-30', '18:45', '19:00', 4, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-30T12:45:00.000Z', '2026-08-29T02:59:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('dd7be1ff-9c25-47da-8a60-e6ced2805509', '4c6a39c2-67e1-4ecd-8ce2-242df82137ba', '6cb7ff7e-94fa-4242-9469-5ae23b900dfe', '2026-08-30', '19:15', '19:30', 6, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-30T13:15:00.000Z', '2026-08-27T12:58:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('26bf02a2-8496-4cf8-adbd-879b9e76b40e', 'd9dd994c-5932-4a48-8349-63f8f01718ce', '6cb7ff7e-94fa-4242-9469-5ae23b900dfe', '2026-08-30', '19:30', '19:45', 7, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-30T13:30:00.000Z', '2026-08-25T15:20:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d049e840-e890-4f96-8fea-90fb9903f0d9', 'd3c32d1a-5eec-4d25-a18e-fafb4efbb30d', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-08-31', '10:40', '10:50', 5, 'seen', 'online', NULL, '557f3798-6ad4-4d8f-a0c2-f67e5a3a369e', NULL, NULL, '2026-08-31T04:40:00.000Z', '2026-08-29T08:17:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('7840eaba-29b8-4b64-9a8b-d5cca02410ce', 'a69c803c-7a93-4d46-a68b-6346c8e26384', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-08-31', '11:50', '12:00', 12, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-31T05:50:00.000Z', '2026-08-31T15:15:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('4463014d-91eb-42e3-be80-d9789eefe6cd', '06be4f9c-7e86-4d1c-9052-aa5ac0c30bf1', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-08-31', '19:24', '19:36', 13, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-31T13:24:00.000Z', '2026-08-26T13:59:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('be5b1e2e-d4fb-4469-8c8a-52bbb3c85329', '0ccf4637-52f0-48be-9f6c-2b959b955cc2', 'a7973606-e277-411f-a0c3-94f66f76067c', '2026-08-31', '12:45', '13:00', 12, 'cancelled', 'online', NULL, 'af7f1ab3-c4bf-4b72-b7a9-62865d0027b1', NULL, 'staff', NULL, '2026-08-27T11:56:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('4390439d-14e0-4858-8af7-473b58e93c7e', 'cbdb7fd4-324a-4498-9783-903beb64319c', '6e33331d-c111-4e1f-90e7-5edce5f2c513', '2026-08-31', '17:30', '17:42', 1, 'seen', 'online', NULL, 'c0b45781-7e4d-46e1-83d8-cefe69b80c47', NULL, NULL, '2026-08-31T11:30:00.000Z', '2026-08-28T13:20:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('64508192-5e5a-4f38-8521-21894bf09136', '86c9276c-684b-479b-947b-6607b6d86c71', '6e33331d-c111-4e1f-90e7-5edce5f2c513', '2026-08-31', '19:06', '19:18', 9, 'seen', 'online', NULL, '52ddfa21-25fc-4314-8e96-85aaf027c17d', NULL, NULL, '2026-08-31T13:06:00.000Z', '2026-08-28T11:41:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('8824d40f-97f9-4396-95ed-8d1e37caf569', 'e587389b-864b-46f0-98b7-45ab8f1e0255', '6e33331d-c111-4e1f-90e7-5edce5f2c513', '2026-08-31', '20:18', '20:30', 15, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-31T14:18:00.000Z', '2026-08-26T05:22:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('7eff7b1b-fd55-4850-ad78-8ec4fa2fce73', '4ef7cf1b-c4a3-4f4b-bd1b-4c8d6cfcc87b', 'e8d25b68-340a-43f7-a9eb-a81eb23f6868', '2026-08-31', '11:00', '11:15', 3, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-31T05:00:00.000Z', '2026-08-27T09:29:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('bf883709-337d-4038-8208-7147e320262c', '95b7fa03-ec69-4e0e-a56e-240ca9594ccb', 'e8d25b68-340a-43f7-a9eb-a81eb23f6868', '2026-08-31', '11:15', '11:30', 4, 'seen', 'online', NULL, '462c7c6f-d45a-4fb1-acd6-e1168f16bb62', NULL, NULL, '2026-08-31T05:15:00.000Z', '2026-08-28T09:51:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('bb83b3b7-ed4c-4fb8-942e-70c073c8a2e1', '921e29e7-4f55-4dda-81be-334126e79377', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-31', '16:24', '16:36', 3, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-31T10:24:00.000Z', '2026-08-28T07:38:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d293580e-bd4e-4ee4-992b-a233819c6230', 'd3c32d1a-5eec-4d25-a18e-fafb4efbb30d', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-31', '16:48', '17:00', 5, 'cancelled', 'online', NULL, NULL, NULL, 'staff', NULL, '2026-08-27T15:57:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('639b5dd3-bb75-4193-af84-2d0b0e33a5ab', '0fc2ada7-87c1-48f9-badc-5280909baa9f', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-31', '18:12', '18:24', 12, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-08-31T12:12:00.000Z', '2026-08-29T04:03:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('e4e45ae8-cf3e-4263-a4bd-9c34b03b8e54', 'ab279882-d03b-49f6-8a41-ec3ebc5dfaa9', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-08-31', '18:48', '19:00', 15, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-31T12:48:00.000Z', '2026-08-26T04:17:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('7ec74cae-7637-40dc-8cef-904d30035719', 'be9a2331-cfc4-4be3-8812-13b93b85f8c2', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-08-31', '10:10', '10:20', 2, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-31T04:10:00.000Z', '2026-08-28T04:30:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('b2fe6b64-637f-4baf-a903-53a9c37d9b44', '90f63dda-938e-450a-a040-33d2c0590b47', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-08-31', '10:40', '10:50', 5, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-31T04:40:00.000Z', '2026-08-25T03:43:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('5ed24555-1b19-4fe6-a5e7-a209e865fccd', 'fdf67440-b118-4b31-b65c-38feac807cbb', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-08-31', '12:20', '12:30', 15, 'cancelled', 'online', NULL, NULL, NULL, 'patient', NULL, '2026-08-29T12:25:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('400847d8-48da-4176-90a8-84f25d93c79b', 'ce27dada-6029-4332-9839-562dc3401de9', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-08-31', '12:30', '12:40', 16, 'no_show', 'walk_in', NULL, NULL, NULL, NULL, NULL, '2026-08-31T09:20:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('19387816-41a9-432e-bfab-9196ff92cd91', 'ac098341-eb9f-411e-b8d5-bab91f031533', '934d9e7d-7a3e-447a-b995-631ffb3b5e88', '2026-08-31', '17:00', '17:10', 1, 'no_show', 'walk_in', NULL, NULL, NULL, NULL, NULL, '2026-08-31T15:57:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('3f64612d-72e8-469e-9741-5c216df61084', '921e29e7-4f55-4dda-81be-334126e79377', '934d9e7d-7a3e-447a-b995-631ffb3b5e88', '2026-08-31', '18:00', '18:10', 7, 'seen', 'online', NULL, 'bd0748f4-1781-47a1-b42d-34b5ef3d3fc6', NULL, NULL, '2026-08-31T12:00:00.000Z', '2026-08-25T08:33:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('db4765f9-07ac-4659-8bf5-e05ce7755d53', '8c5728d0-91f3-469b-b67c-bfb007b892e6', '934d9e7d-7a3e-447a-b995-631ffb3b5e88', '2026-08-31', '18:20', '18:30', 9, 'seen', 'online', NULL, '3f19255a-f396-4545-9701-867cc6aaf970', NULL, NULL, '2026-08-31T12:20:00.000Z', '2026-08-28T12:11:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('c644f036-5b2a-45fd-9603-6c03727af6d6', 'd9552cab-bc75-457f-a968-889795cfa1cc', '934d9e7d-7a3e-447a-b995-631ffb3b5e88', '2026-08-31', '18:30', '18:40', 10, 'seen', 'online', NULL, '21efdb94-c19c-499d-8cfa-9b80c5cdb2c5', NULL, NULL, '2026-08-31T12:30:00.000Z', '2026-08-27T10:25:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('14c2965f-c211-4b45-9ecf-9398f28b8d0f', '5a061fc9-b0f3-47a3-a623-feae44084767', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-08-31', '16:00', '16:10', 1, 'seen', 'online', NULL, 'f5d8a52f-92ff-4073-b382-bdc60ff50f8a', NULL, NULL, '2026-08-31T10:00:00.000Z', '2026-08-31T02:35:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('4e132d03-adcb-4863-afb6-390713585fb2', 'cd4d3cb9-d375-455c-a633-72f235212b75', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-08-31', '16:20', '16:30', 3, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-08-31T10:20:00.000Z', '2026-08-30T03:17:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d235613c-e340-4c3c-922f-052f1ec7613a', '7e6f3489-de55-441f-87b2-c9f535c939e3', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-08-31', '16:40', '16:50', 5, 'seen', 'online', NULL, '82ad16e5-512d-4ef0-8d38-0b9ceef0481b', NULL, NULL, '2026-08-31T10:40:00.000Z', '2026-08-28T07:35:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('7c3889e3-6572-493e-bbf2-5de52985e29f', 'd537e3c1-68b9-4cea-9cd0-dfd2ea1fa061', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-09-01', '18:12', '18:24', 7, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-01T12:12:00.000Z', '2026-08-27T10:50:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('ad8cb66d-9a03-4c91-b1fb-1001cea118c5', '6c2cd65e-e3d4-4472-bb94-376ffaf10385', 'cde5c4ba-9ee8-48b3-853b-6060216dc72f', '2026-09-01', '12:00', '12:15', 9, 'seen', 'online', NULL, '8f933745-bf9c-4cd4-9546-236a24e52ce7', NULL, NULL, '2026-09-01T06:00:00.000Z', '2026-08-29T08:21:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('f67a97d7-87cb-462a-b148-927f9ab3bd12', '0fc2ada7-87c1-48f9-badc-5280909baa9f', '937766e2-c060-4f5a-8923-48d5ece2bce7', '2026-09-01', '11:10', '11:20', 8, 'seen', 'online', NULL, '430a91c6-e6af-4a68-a26e-eba88bf784cb', NULL, NULL, '2026-09-01T05:10:00.000Z', '2026-08-31T02:13:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('874ecf62-d5c8-4d16-bf38-86dd3e7a60e4', '60b0db75-9502-4172-922f-857ffe1ba292', '449686b1-9efa-4db4-8a4f-476934c3bf6b', '2026-09-01', '16:15', '16:30', 2, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-01T10:15:00.000Z', '2026-08-29T14:28:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('0696af44-a6bd-4b59-b27a-93e0c3e5d11a', '60b0db75-9502-4172-922f-857ffe1ba292', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', '2026-09-01', '10:00', '10:12', 1, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-01T04:00:00.000Z', '2026-08-29T07:10:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('87c855d3-b5c0-482d-8690-fb3fa80590a8', 'e55e51f5-e403-42ed-ba4d-29a4826af815', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', '2026-09-01', '11:36', '11:48', 9, 'seen', 'online', NULL, '2d9a452f-3ed9-4d78-9931-dd7b3b91f6de', NULL, NULL, '2026-09-01T05:36:00.000Z', '2026-08-30T13:27:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('476f69b1-932a-4dc3-81f4-77535d63ca36', '7c28a20f-42bb-4c13-a9bf-df4a7bd66c40', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', '2026-09-01', '12:00', '12:12', 11, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-09-01T06:00:00.000Z', '2026-09-01T11:05:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('13bf1217-b0a4-48c1-b331-4731a73019ca', '38b3ea1a-7c3c-4c56-acb1-dc62d519ab99', '324b840d-1cc8-4775-aa9a-895634368637', '2026-09-01', '18:20', '18:30', 9, 'seen', 'online', NULL, '3a613a7c-31cb-4285-8d81-c1100fd49aa3', NULL, NULL, '2026-09-01T12:20:00.000Z', '2026-08-28T03:17:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('dddd1237-3077-4113-8fba-c67a71e38e5d', 'f4914912-3ce1-41b9-bd24-e2dbf85b0a32', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-09-01', '19:24', '19:36', 13, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-01T13:24:00.000Z', '2026-08-31T08:37:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('faad33e2-f2a0-46b1-a905-d3f320e9bdeb', '2be32e0d-a2af-42a3-ae96-f4fee9073830', '29043842-761d-4848-8db4-9790e81d243b', '2026-09-01', '10:15', '10:30', 2, 'no_show', 'phone', NULL, NULL, NULL, NULL, NULL, '2026-08-29T14:14:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('aae87988-46d4-477a-a90e-952c3b23ebfd', '7c28a20f-42bb-4c13-a9bf-df4a7bd66c40', '9a93720c-fd67-41fa-b34c-cb22844a0b46', '2026-09-01', '18:20', '18:40', 5, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-01T12:20:00.000Z', '2026-08-27T14:35:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('03e7f1a9-0744-4f1d-9dd1-02605b729382', '78434abb-47c8-4fc8-b73b-586f43ed7738', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-09-02', '10:30', '10:40', 4, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-02T04:30:00.000Z', '2026-08-30T14:19:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('8811f399-005c-4ba5-b6db-65a8f7c79321', '2cc2a4bc-eb02-4b32-83c5-124a73004b1f', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-09-02', '11:10', '11:20', 8, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-02T05:10:00.000Z', '2026-09-01T10:31:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('1d4f90b5-0e68-4f00-b609-8cc8d2a78a45', '8e5b42b0-54fc-49e2-b4c1-84ce27b15f8d', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-09-02', '12:00', '12:10', 13, 'cancelled', 'online', NULL, '6df7f7cb-372c-4db8-8fb5-3b3304340b9b', NULL, 'staff', NULL, '2026-08-29T10:55:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('1c97210e-a31e-4d10-aedb-eec61947daed', '2be32e0d-a2af-42a3-ae96-f4fee9073830', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-09-02', '18:00', '18:12', 6, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-02T12:00:00.000Z', '2026-08-27T15:49:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('ce127b24-2fab-425d-b87e-c27e2e34c57f', '0dd817c7-12b9-4b2f-9f84-6034cf61275b', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-09-02', '18:36', '18:48', 9, 'seen', 'online', NULL, '9d3f58d2-6613-44ef-bb23-a868c8367da4', NULL, NULL, '2026-09-02T12:36:00.000Z', '2026-08-30T08:21:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('b636cca4-de9f-490d-9f67-31d0bb3de3da', '6c2cd65e-e3d4-4472-bb94-376ffaf10385', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-09-02', '19:24', '19:36', 13, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-02T13:24:00.000Z', '2026-09-01T03:34:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('5d92e7b3-80eb-4ec3-8323-0c2e9dc6e8a8', '78434abb-47c8-4fc8-b73b-586f43ed7738', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-09-02', '19:48', '20:00', 15, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-02T13:48:00.000Z', '2026-09-02T12:44:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('6eb5174c-11c1-4b9c-af89-592f164042d3', '95b7fa03-ec69-4e0e-a56e-240ca9594ccb', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-09-02', '20:36', '20:48', 19, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-02T14:36:00.000Z', '2026-08-28T15:45:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('746c89a7-f8fd-4fd9-b7cf-ae00a00bef78', '79b2baa7-843a-4882-8028-bafe8d65b7fb', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-09-02', '20:48', '21:00', 20, 'no_show', 'online', NULL, NULL, NULL, NULL, NULL, '2026-09-02T04:18:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('550a1a2a-04bb-4062-8e06-0b202a74999b', 'f5ae2167-bf4c-4983-805c-bc57b1c80890', '190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', '2026-09-02', '20:15', '20:30', 10, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-02T14:15:00.000Z', '2026-08-30T08:37:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('8fc433ae-b05e-401b-b821-6afc4b1d1a8e', '63270b4f-f4c1-4392-9267-5ad558754fca', '57dbcfce-ad0e-4c98-8d2f-78b26ae72471', '2026-09-02', '17:15', '17:30', 2, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-02T11:15:00.000Z', '2026-09-02T12:19:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('19eb44b0-2356-4e04-819d-47d5c9f1727f', 'fdf67440-b118-4b31-b65c-38feac807cbb', '57dbcfce-ad0e-4c98-8d2f-78b26ae72471', '2026-09-02', '17:30', '17:45', 3, 'seen', 'online', NULL, '06d8a186-d64b-40d6-8364-2fe1a26c1756', NULL, NULL, '2026-09-02T11:30:00.000Z', '2026-08-30T04:36:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('e311175a-b87e-4a89-a9e4-2952072a722e', 'f34c1b22-e657-459a-9c02-4e39b61ca0e1', '57dbcfce-ad0e-4c98-8d2f-78b26ae72471', '2026-09-02', '18:00', '18:15', 5, 'seen', 'online', NULL, 'c61c646c-c66b-46ad-a505-18c2a6526abf', NULL, NULL, '2026-09-02T12:00:00.000Z', '2026-09-02T08:30:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('1c5ad7ee-9ed1-4b9d-9e08-852237664b7c', '38b3ea1a-7c3c-4c56-acb1-dc62d519ab99', '57dbcfce-ad0e-4c98-8d2f-78b26ae72471', '2026-09-02', '19:15', '19:30', 10, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-02T13:15:00.000Z', '2026-08-27T07:53:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('df069a98-0d75-405f-a81e-abd0544bd6ea', 'cbdb7fd4-324a-4498-9783-903beb64319c', 'e8d25b68-340a-43f7-a9eb-a81eb23f6868', '2026-09-02', '10:30', '10:45', 1, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-02T04:30:00.000Z', '2026-09-02T02:28:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('74bd13ab-3dcd-4174-8feb-4a77457a2cd4', '87954318-9acb-4272-a29b-c8c3c95f0a42', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-09-02', '17:48', '18:00', 10, 'cancelled', 'phone', NULL, NULL, NULL, 'patient', NULL, '2026-08-30T09:26:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('c59a5453-ae91-4ad6-baf8-1245f9c0b61d', '08c08bf3-ca0c-4ccf-b67d-4c42a939d31a', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-09-02', '18:00', '18:12', 11, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-02T12:00:00.000Z', '2026-09-01T03:05:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('b8bd1b1e-16a7-47c2-83f4-24b03809678f', 'ac098341-eb9f-411e-b8d5-bab91f031533', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-09-02', '18:24', '18:36', 13, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-02T12:24:00.000Z', '2026-08-30T15:47:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('f26eeef8-b670-4206-b48b-b5ee386837c9', '0dd817c7-12b9-4b2f-9f84-6034cf61275b', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-09-02', '18:36', '18:48', 14, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-02T12:36:00.000Z', '2026-08-31T12:11:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('855a1348-41b7-4730-8f5f-32e78697023f', '3bd6a7a1-13d8-4a89-9dd2-c144da1014a5', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-09-02', '10:20', '10:30', 3, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-02T04:20:00.000Z', '2026-08-29T02:42:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('450e3413-8eb0-404d-b282-4c2ca367acf1', '4a520e73-c859-4ff6-85a9-70105daead83', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-09-02', '10:40', '10:50', 5, 'no_show', 'phone', NULL, NULL, NULL, NULL, NULL, '2026-08-29T06:14:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('2f7d9223-d88c-4e88-a0ab-d24baeeb24e2', '514ae1ac-f21a-4c5d-91b9-ac7412a23783', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-09-02', '11:20', '11:30', 9, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-02T05:20:00.000Z', '2026-08-28T06:06:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('b19c20c2-e642-486d-987d-42a4533efe0d', 'e880057b-7e1b-495c-8253-a2b066049a61', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-09-02', '12:00', '12:10', 13, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-02T06:00:00.000Z', '2026-08-30T08:16:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('2301de87-92eb-4e20-bcb3-c7b47fe89639', 'a6bbcc23-a745-4694-bf5e-e05ba9f646b8', '8f652753-cdde-4c22-993a-26b8bba0fa74', '2026-09-02', '17:00', '17:15', 1, 'seen', 'online', NULL, '93034943-178a-4e0a-896b-de0d4ec1e6a2', NULL, NULL, '2026-09-02T11:00:00.000Z', '2026-08-29T12:49:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('aad2543a-20e5-496b-b1bc-903e99256d85', '9c76e7ab-d8ab-4106-a04b-b68751eac0ad', '8f652753-cdde-4c22-993a-26b8bba0fa74', '2026-09-02', '17:15', '17:30', 2, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-02T11:15:00.000Z', '2026-08-27T05:55:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('1fffa14a-a823-4fd5-a33c-e91b61a364e3', '2ca5bae2-8af3-4a25-8704-6c8df81081ff', '8f652753-cdde-4c22-993a-26b8bba0fa74', '2026-09-02', '17:30', '17:45', 3, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-02T11:30:00.000Z', '2026-08-31T08:01:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('ac972229-2d4c-4e94-a930-4583c3dc6017', '3bd6a7a1-13d8-4a89-9dd2-c144da1014a5', '8f652753-cdde-4c22-993a-26b8bba0fa74', '2026-09-02', '19:15', '19:30', 10, 'seen', 'online', NULL, 'c12fd80d-a19e-4ffe-93b6-3fcc7963575f', NULL, NULL, '2026-09-02T13:15:00.000Z', '2026-08-29T04:37:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('08d09d03-9000-4447-a389-541c645d3f8b', '06be4f9c-7e86-4d1c-9052-aa5ac0c30bf1', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-09-02', '16:30', '16:40', 4, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-02T10:30:00.000Z', '2026-08-30T15:22:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('cd3194c1-a399-4f1e-b72e-78df37ab6797', '06be4f9c-7e86-4d1c-9052-aa5ac0c30bf1', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-09-02', '18:30', '18:40', 16, 'seen', 'online', NULL, '53f6912b-a479-44b7-a736-6a17233c90d3', NULL, NULL, '2026-09-02T12:30:00.000Z', '2026-08-30T11:19:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('08ea14dc-016d-4b6f-8211-5b0ec47d0cd1', '95b7fa03-ec69-4e0e-a56e-240ca9594ccb', '6cb7ff7e-94fa-4242-9469-5ae23b900dfe', '2026-09-02', '19:15', '19:30', 6, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-09-02T13:15:00.000Z', '2026-09-02T08:21:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('25d82bdc-4471-4d5a-9d6e-e0097a00ebea', 'a53aafb7-cd70-4b68-9d29-d1ba2c72fd25', '6cb7ff7e-94fa-4242-9469-5ae23b900dfe', '2026-09-02', '19:45', '20:00', 8, 'seen', 'online', NULL, '7458f8b1-6072-45a4-b5f4-3741697a709e', NULL, NULL, '2026-09-02T13:45:00.000Z', '2026-09-02T09:53:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('af5cc9e5-8871-4ae7-aa37-3cd18a4dfbda', '2e57e115-856e-45db-b73a-0bbdf518e360', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-09-03', '17:00', '17:12', 1, 'seen', 'online', NULL, 'b7add7e2-b5cd-4678-a4b5-fee0ac2d621f', NULL, NULL, '2026-09-03T11:00:00.000Z', '2026-08-29T07:49:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('e5384ddf-b3e8-4ef0-8e0a-1677d4a9cd85', '88fb6134-3337-4fac-8fc3-444e339a952c', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-09-03', '17:48', '18:00', 5, 'seen', 'online', NULL, 'c81d5682-c5d3-4964-b6f2-a1a03672b298', NULL, NULL, '2026-09-03T11:48:00.000Z', '2026-08-29T02:44:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('3fd651c5-3fee-4c18-bafe-9b4e1921818a', '921e29e7-4f55-4dda-81be-334126e79377', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-09-03', '18:24', '18:36', 8, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-03T12:24:00.000Z', '2026-08-31T08:00:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('846c29c8-66e6-4f32-a26d-43dbbb8aa731', '8dc45f6f-d1db-4c02-8299-8ad07e22461e', '6e33331d-c111-4e1f-90e7-5edce5f2c513', '2026-09-03', '17:42', '17:54', 12, 'cancelled', 'online', NULL, NULL, NULL, 'patient', NULL, '2026-08-29T09:12:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('71319bb0-e8ad-4a0d-8639-a9bb0ac1793e', 'e55e51f5-e403-42ed-ba4d-29a4826af815', '6e33331d-c111-4e1f-90e7-5edce5f2c513', '2026-09-03', '19:18', '19:30', 20, 'seen', 'online', NULL, '926e5c6e-04d6-48f1-8034-155c9dc2529e', NULL, NULL, '2026-09-03T13:18:00.000Z', '2026-08-31T02:49:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('86b70f15-a1af-4bb5-a697-9fb245dde8f2', '7c28a20f-42bb-4c13-a9bf-df4a7bd66c40', '449686b1-9efa-4db4-8a4f-476934c3bf6b', '2026-09-03', '16:00', '16:15', 1, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-03T10:00:00.000Z', '2026-08-30T09:58:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('940d3788-7bd9-4c34-86df-bb37b5d277f8', '7536f1db-4016-4192-a129-4a64283e92e6', '449686b1-9efa-4db4-8a4f-476934c3bf6b', '2026-09-03', '16:30', '16:45', 3, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-03T10:30:00.000Z', '2026-09-01T10:41:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('bd068bd5-ff1e-4615-8c29-cd31c5bf4950', 'ab279882-d03b-49f6-8a41-ec3ebc5dfaa9', '449686b1-9efa-4db4-8a4f-476934c3bf6b', '2026-09-03', '18:15', '18:30', 10, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-03T12:15:00.000Z', '2026-09-01T11:57:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('c5f858d4-13c3-4f9b-8646-3654990909c4', '0fc2ada7-87c1-48f9-badc-5280909baa9f', '449686b1-9efa-4db4-8a4f-476934c3bf6b', '2026-09-03', '18:45', '19:00', 12, 'seen', 'online', NULL, '6a32d350-4099-41b1-aa52-47e7e3d2aa05', NULL, NULL, '2026-09-03T12:45:00.000Z', '2026-09-02T05:42:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('026c2c1b-fad0-46e5-9143-467aede63863', 'b4fad5d8-e32a-422b-9619-0cd718d096e8', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', '2026-09-03', '11:12', '11:24', 7, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-03T05:12:00.000Z', '2026-08-28T14:43:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d47a0fee-eb2b-43bc-80aa-3dfa580aa17d', 'd759e7a6-84f8-4500-84c5-3d943e0e0741', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', '2026-09-03', '11:36', '11:48', 9, 'seen', 'online', NULL, '89d46be3-afa9-4d8e-a39e-2f1b791ed53c', NULL, NULL, '2026-09-03T05:36:00.000Z', '2026-09-02T11:52:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('43395bd7-303e-4c2f-b23b-9cec14b408bf', '63270b4f-f4c1-4392-9267-5ad558754fca', '324b840d-1cc8-4775-aa9a-895634368637', '2026-09-03', '17:10', '17:20', 2, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-03T11:10:00.000Z', '2026-09-02T14:03:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('e1f182c8-b5d7-47bb-b14c-725870b45c8b', '38b3ea1a-7c3c-4c56-acb1-dc62d519ab99', '324b840d-1cc8-4775-aa9a-895634368637', '2026-09-03', '18:20', '18:30', 9, 'seen', 'online', NULL, '3b2e1708-fb8c-45e4-a704-280b09bd7193', NULL, NULL, '2026-09-03T12:20:00.000Z', '2026-08-29T06:02:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('73b86eda-9ac9-4d07-853b-97f6bd717611', 'e1bb6c96-e517-4419-b09d-82d24c760df4', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-09-03', '17:00', '17:12', 1, 'seen', 'online', NULL, 'd94c0f00-ba3f-4839-8984-5b043dbf05cc', NULL, NULL, '2026-09-03T11:00:00.000Z', '2026-09-01T09:39:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('8e806931-4cbb-4603-be03-56da03d94717', '87954318-9acb-4272-a29b-c8c3c95f0a42', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-09-03', '17:24', '17:36', 3, 'seen', 'online', NULL, '3578d59a-db1e-4fb2-8930-d783ebcf63f8', NULL, NULL, '2026-09-03T11:24:00.000Z', '2026-08-31T02:00:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('76e8158a-9d7a-44f5-8683-39ef531d8ad1', '787c47d8-c233-4b81-916f-98c17a546362', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-09-03', '17:36', '17:48', 4, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-09-03T11:36:00.000Z', '2026-09-03T07:25:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d4d5a706-b7e8-4fc5-8fef-ee41037c1e64', 'e55e51f5-e403-42ed-ba4d-29a4826af815', '29043842-761d-4848-8db4-9790e81d243b', '2026-09-03', '11:30', '11:45', 7, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-03T05:30:00.000Z', '2026-09-03T10:51:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('41e13e01-7b36-4434-be33-f6636b4e8e64', '0fc2ada7-87c1-48f9-badc-5280909baa9f', '9a93720c-fd67-41fa-b34c-cb22844a0b46', '2026-09-03', '18:20', '18:40', 5, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-03T12:20:00.000Z', '2026-08-28T09:55:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('2ced303a-bd05-474a-865c-996fdcd0724e', '60b0db75-9502-4172-922f-857ffe1ba292', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-09-05', '10:30', '10:40', 4, 'seen', 'online', NULL, '6559b543-c13e-4822-9325-7281af1ffbfd', NULL, NULL, '2026-09-05T04:30:00.000Z', '2026-09-05T10:06:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('c43ce292-90cc-4df1-a36f-f70adbed56c2', '514ae1ac-f21a-4c5d-91b9-ac7412a23783', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-09-05', '10:40', '10:50', 5, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-05T04:40:00.000Z', '2026-08-31T15:43:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('16301cab-8a76-4cad-8efd-eb43c8afb095', '447b9eb5-4615-424f-8b62-cf91711d4fdd', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-09-05', '19:24', '19:36', 13, 'seen', 'online', NULL, 'd61a2fdb-b96b-4003-8843-f02b01cb3cfd', NULL, NULL, '2026-09-05T13:24:00.000Z', '2026-09-03T06:46:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('05605a66-9369-47f3-8de0-d39a29c27df1', 'f10a64dc-530a-447a-b6be-926ea3b7a4ba', 'a7973606-e277-411f-a0c3-94f66f76067c', '2026-09-05', '11:15', '11:30', 6, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-05T05:15:00.000Z', '2026-08-30T08:04:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d05e62d2-da98-4949-b5ba-99d7d49f6dfc', '505bc95d-8fc9-496d-8f50-321d1575c814', 'a7973606-e277-411f-a0c3-94f66f76067c', '2026-09-05', '11:45', '12:00', 8, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-05T05:45:00.000Z', '2026-09-02T14:24:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('c24f9fff-0d10-4feb-97e8-851ae6f554cc', '2be32e0d-a2af-42a3-ae96-f4fee9073830', '6e33331d-c111-4e1f-90e7-5edce5f2c513', '2026-09-05', '17:42', '17:54', 2, 'no_show', 'online', NULL, NULL, NULL, NULL, NULL, '2026-08-31T15:57:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('f185367f-5de9-418c-b3c2-553a3410daaa', 'd759e7a6-84f8-4500-84c5-3d943e0e0741', '449686b1-9efa-4db4-8a4f-476934c3bf6b', '2026-09-05', '17:00', '17:15', 5, 'no_show', 'online', NULL, NULL, NULL, NULL, NULL, '2026-09-05T02:56:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d7d620b5-2d0d-4656-89a2-042f95b5b390', '95b7fa03-ec69-4e0e-a56e-240ca9594ccb', '449686b1-9efa-4db4-8a4f-476934c3bf6b', '2026-09-05', '19:00', '19:15', 13, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-05T13:00:00.000Z', '2026-09-01T05:27:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('7a758dec-969f-4e2c-a7d5-eb802fc1b837', 'f10a64dc-530a-447a-b6be-926ea3b7a4ba', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-09-05', '16:24', '16:36', 3, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-09-05T10:24:00.000Z', '2026-09-05T11:36:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d4ac39d1-7797-4269-a557-b8d2248e2dbf', 'b98fd7c9-40d8-4852-81ea-46fa7d073e6e', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-09-05', '19:24', '19:36', 18, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-05T13:24:00.000Z', '2026-09-04T13:29:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('a96a2833-02cf-4fa2-8f31-54087a21cf7c', 'b98fd7c9-40d8-4852-81ea-46fa7d073e6e', '324b840d-1cc8-4775-aa9a-895634368637', '2026-09-05', '19:40', '19:50', 17, 'no_show', 'online', NULL, 'f029415f-2b9c-4c69-8436-5e781e0b7caf', NULL, NULL, NULL, '2026-09-05T04:04:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('68c5e924-7280-4752-aed5-36c33352704d', '0bf35f8a-6795-443c-916d-ca9fc8496882', '934d9e7d-7a3e-447a-b995-631ffb3b5e88', '2026-09-05', '17:10', '17:20', 2, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-05T11:10:00.000Z', '2026-09-01T13:02:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('954cfbd8-f447-442e-8ca0-dea6a9a0075c', '3b2204b2-947b-411e-a52e-941e6ca2eb9e', '934d9e7d-7a3e-447a-b995-631ffb3b5e88', '2026-09-05', '17:30', '17:40', 4, 'no_show', 'walk_in', NULL, NULL, NULL, NULL, NULL, '2026-09-05T08:29:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('83e1b515-761a-430f-9b88-511219e2be9f', '5e799ed3-16d8-401d-b1c8-76336013c787', '29043842-761d-4848-8db4-9790e81d243b', '2026-09-05', '10:15', '10:30', 2, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-05T04:15:00.000Z', '2026-09-05T15:15:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('791f1337-d874-478d-8286-42cb872d24fa', '95b7fa03-ec69-4e0e-a56e-240ca9594ccb', '29043842-761d-4848-8db4-9790e81d243b', '2026-09-05', '12:45', '13:00', 12, 'seen', 'online', NULL, '28b5ad46-2bc7-48ae-988e-111870137a1e', NULL, NULL, '2026-09-05T06:45:00.000Z', '2026-09-01T12:08:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('f0079908-f2c7-4149-96f5-112bf82a342d', '17462f3b-1948-4d43-9a22-3f44a855c382', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-09-05', '16:00', '16:10', 1, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-05T10:00:00.000Z', '2026-09-03T15:46:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('109be266-5205-4aaf-b871-bb8e4189dd03', '921e29e7-4f55-4dda-81be-334126e79377', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-09-05', '17:10', '17:20', 8, 'seen', 'online', NULL, '322fee12-eec3-4b5e-a13d-447ab1380f74', NULL, NULL, '2026-09-05T11:10:00.000Z', '2026-09-05T04:10:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('02461548-b91a-41f1-8a0f-2bb4b4c07301', '7c28a20f-42bb-4c13-a9bf-df4a7bd66c40', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-09-05', '18:10', '18:20', 14, 'no_show', 'online', NULL, '9d52e7c4-9238-484c-9ad7-8f21f8519ba3', NULL, NULL, NULL, '2026-09-05T08:50:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('6ec92e64-c73d-4bef-bdde-76c8ce256d93', '038656ce-769c-41b0-af93-69db2307756a', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-09-06', '17:36', '17:48', 4, 'seen', 'online', NULL, '1367d3c2-d259-4b08-a414-416c90482875', NULL, NULL, '2026-09-06T11:36:00.000Z', '2026-09-02T11:10:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('bbd57524-eba7-48f9-84f3-91a38efc46a4', '3b2204b2-947b-411e-a52e-941e6ca2eb9e', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-09-06', '19:00', '19:12', 11, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-06T13:00:00.000Z', '2026-08-31T12:57:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('46c81c25-1310-47cd-b215-30751596676e', '2be32e0d-a2af-42a3-ae96-f4fee9073830', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-09-06', '19:12', '19:24', 12, 'cancelled', 'online', NULL, NULL, NULL, 'staff', NULL, '2026-09-03T13:30:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('ab9c2284-f4cc-4644-8ba8-b86c21fc7f56', 'd537e3c1-68b9-4cea-9cd0-dfd2ea1fa061', 'd754a2c1-c48b-4163-af33-b533dc3995b7', '2026-09-06', '20:00', '20:12', 16, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-06T14:00:00.000Z', '2026-09-02T08:00:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('5b1fbdaa-bf9c-4ff3-a644-048271203acd', '038656ce-769c-41b0-af93-69db2307756a', 'cde5c4ba-9ee8-48b3-853b-6060216dc72f', '2026-09-06', '12:45', '13:00', 12, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-09-06T06:45:00.000Z', '2026-09-06T07:00:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('f9f8ade8-74cd-4784-9351-83c22013409a', '0fc2ada7-87c1-48f9-badc-5280909baa9f', '57dbcfce-ad0e-4c98-8d2f-78b26ae72471', '2026-09-06', '19:15', '19:30', 10, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-06T13:15:00.000Z', '2026-09-02T12:11:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('a6c0a441-175e-4b8d-b9d3-9dbaecd685d3', '95b7fa03-ec69-4e0e-a56e-240ca9594ccb', '937766e2-c060-4f5a-8923-48d5ece2bce7', '2026-09-06', '11:10', '11:20', 8, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-06T05:10:00.000Z', '2026-09-02T15:40:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('ef45fcc9-d555-42bc-adc2-9647d5e3ec6f', '0a06e5f9-b54e-41ca-a856-8556bd3ddebf', '937766e2-c060-4f5a-8923-48d5ece2bce7', '2026-09-06', '12:00', '12:10', 13, 'seen', 'online', NULL, '490696c0-0172-48a9-ac29-7265d301c367', NULL, NULL, '2026-09-06T06:00:00.000Z', '2026-09-01T05:04:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('edf19527-798a-4404-b55a-bce901a690b8', '038656ce-769c-41b0-af93-69db2307756a', '937766e2-c060-4f5a-8923-48d5ece2bce7', '2026-09-06', '12:10', '12:20', 14, 'seen', 'online', NULL, 'f750e2d2-1294-4db7-b456-64f054216c59', NULL, NULL, '2026-09-06T06:10:00.000Z', '2026-09-03T13:03:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('8b800179-4498-4594-a850-ba4c87eb9e14', '7ae76e07-b643-492f-8267-78d86ca0b9ee', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', '2026-09-06', '12:24', '12:36', 13, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-06T06:24:00.000Z', '2026-08-31T05:42:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('a260ec76-3ea1-4897-8c76-a8252bb90573', 'cd4d3cb9-d375-455c-a633-72f235212b75', '324b840d-1cc8-4775-aa9a-895634368637', '2026-09-06', '19:30', '19:40', 16, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-06T13:30:00.000Z', '2026-09-03T03:59:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('aef4ccaa-bffe-4afe-b2ad-9b8351ef427c', 'f4914912-3ce1-41b9-bd24-e2dbf85b0a32', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-09-06', '17:12', '17:24', 2, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-06T11:12:00.000Z', '2026-09-02T06:18:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('f87abf07-a04e-44cb-ac22-f415bcda9f1e', '7c28a20f-42bb-4c13-a9bf-df4a7bd66c40', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-09-06', '17:36', '17:48', 4, 'no_show', 'walk_in', NULL, NULL, NULL, NULL, NULL, '2026-09-06T15:09:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('b36c4dc8-5d46-4eeb-98f9-ef20d64424b6', '038656ce-769c-41b0-af93-69db2307756a', '044f6914-db23-4c7a-8a51-c59a76c874e6', '2026-09-06', '19:00', '19:12', 11, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-06T13:00:00.000Z', '2026-09-01T07:21:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('b3df414b-da82-4ba6-bed1-0c598e797ccc', '0bf35f8a-6795-443c-916d-ca9fc8496882', '8f652753-cdde-4c22-993a-26b8bba0fa74', '2026-09-06', '19:15', '19:30', 10, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-06T13:15:00.000Z', '2026-09-02T06:58:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('a3330f84-a8f3-4d64-98c0-7d9f79672c38', '3a996823-3d85-47c8-add9-af5370163c73', '6cb7ff7e-94fa-4242-9469-5ae23b900dfe', '2026-09-06', '18:00', '18:15', 1, 'cancelled', 'phone', NULL, NULL, NULL, 'patient', NULL, '2026-09-03T10:22:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('28a67336-9640-4426-975f-ec0697bd86f9', '20fc0210-19e1-455a-8900-122cfc3133f4', '6cb7ff7e-94fa-4242-9469-5ae23b900dfe', '2026-09-06', '20:15', '20:30', 10, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-06T14:15:00.000Z', '2026-09-01T13:18:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('5e62b6d6-6f11-4fe1-af98-934418067d6d', '0a06e5f9-b54e-41ca-a856-8556bd3ddebf', '63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-09-07', '10:00', '10:10', 1, 'seen', 'online', NULL, 'df36fe98-4c04-4372-901e-bcd961fba4fc', NULL, NULL, '2026-09-07T04:00:00.000Z', '2026-09-05T14:33:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('c2ef7d3d-c0c1-4440-b1af-895d08010844', 'eb8ee420-1dcd-443e-8ba6-747063076c4a', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-09-07', '17:00', '17:12', 1, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-09-07T11:00:00.000Z', '2026-09-07T03:14:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d6e42c77-8085-4a28-9bb0-c274da8aff3b', '2e57e115-856e-45db-b73a-0bbdf518e360', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-09-07', '17:12', '17:24', 2, 'cancelled', 'phone', NULL, NULL, NULL, 'patient', NULL, '2026-09-07T15:15:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('ae93dfdb-c82e-4bc2-a1db-ac6830d4028a', '505bc95d-8fc9-496d-8f50-321d1575c814', 'a7973606-e277-411f-a0c3-94f66f76067c', '2026-09-07', '10:45', '11:00', 4, 'seen', 'online', NULL, '2790bac8-8ed2-46e0-9212-f00cd9d01b80', NULL, NULL, '2026-09-07T04:45:00.000Z', '2026-09-06T14:26:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('0b20a3b8-f73d-4784-a671-b928b930a639', '90f63dda-938e-450a-a040-33d2c0590b47', '6e33331d-c111-4e1f-90e7-5edce5f2c513', '2026-09-07', '18:06', '18:18', 4, 'seen', 'phone', NULL, NULL, NULL, NULL, '2026-09-07T12:06:00.000Z', '2026-09-02T03:28:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('0bcaf3e5-8bf8-4394-bb1c-675c5e6db0f5', 'e587389b-864b-46f0-98b7-45ab8f1e0255', 'e8d25b68-340a-43f7-a9eb-a81eb23f6868', '2026-09-07', '10:45', '11:00', 2, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-07T04:45:00.000Z', '2026-09-06T04:45:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('be3fabb0-399c-45b5-9370-61575568a011', 'ac098341-eb9f-411e-b8d5-bab91f031533', 'e8d25b68-340a-43f7-a9eb-a81eb23f6868', '2026-09-07', '12:00', '12:15', 7, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-07T06:00:00.000Z', '2026-09-01T13:19:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('4d942402-f432-4f66-af9d-f0397bfec3c3', '78434abb-47c8-4fc8-b73b-586f43ed7738', 'e8d25b68-340a-43f7-a9eb-a81eb23f6868', '2026-09-07', '12:45', '13:00', 10, 'no_show', 'walk_in', NULL, NULL, NULL, NULL, NULL, '2026-09-07T05:17:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('1c5655ae-3c87-4383-a4c2-814b3d918852', 'd537e3c1-68b9-4cea-9cd0-dfd2ea1fa061', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-09-07', '18:36', '18:48', 14, 'no_show', 'phone', NULL, NULL, NULL, NULL, NULL, '2026-09-01T12:41:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('1118985c-e9fc-4272-9041-d1773e7a5a54', 'f58cc255-0ccf-44bc-a5ef-0cb126bb5438', '361db253-7907-49bb-b6ad-52fc4f651516', '2026-09-07', '19:00', '19:12', 16, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-09-07T13:00:00.000Z', '2026-09-07T04:35:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('672453d8-f389-472a-afd8-2f103dfaae77', '79b2baa7-843a-4882-8028-bafe8d65b7fb', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', '2026-09-07', '12:50', '13:00', 18, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-07T06:50:00.000Z', '2026-09-06T08:07:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('cf4c0937-3a76-4853-be43-c25a644cbb87', 'a05a8e2a-deb0-4992-8620-4e2d8b9b5c3b', '934d9e7d-7a3e-447a-b995-631ffb3b5e88', '2026-09-07', '19:30', '19:40', 16, 'seen', 'walk_in', NULL, NULL, NULL, NULL, '2026-09-07T13:30:00.000Z', '2026-09-07T04:47:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('d1836088-c4c8-46e5-ba52-44d8cc39e535', 'be9a2331-cfc4-4be3-8812-13b93b85f8c2', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-09-07', '17:10', '17:20', 8, 'cancelled', 'phone', NULL, NULL, NULL, 'patient', NULL, '2026-09-07T03:19:00.000Z');
+INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at) VALUES ('e292ec3b-3b59-4a65-b897-cbcd1f5706a0', '4b6a73d8-1276-4257-a9ae-abdf83eede10', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-09-07', '17:30', '17:40', 10, 'seen', 'online', NULL, NULL, NULL, NULL, '2026-09-07T11:30:00.000Z', '2026-09-02T07:30:00.000Z');
+
+-- Queue State
+INSERT INTO queue_state (doctor_id, date, now_serving_id, updated_at) VALUES ('63411d81-e8d1-45c2-941e-a6c8062b0d95', '2026-11-21', NULL, '2026-11-21T12:10:00.000Z');
+INSERT INTO queue_state (doctor_id, date, now_serving_id, updated_at) VALUES ('1df430f6-e02f-4bdb-86bd-e4a833c8344a', '2026-11-21', NULL, '2026-11-21T12:10:00.000Z');
+INSERT INTO queue_state (doctor_id, date, now_serving_id, updated_at) VALUES ('190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', '2026-11-21', NULL, '2026-11-21T12:10:00.000Z');
+INSERT INTO queue_state (doctor_id, date, now_serving_id, updated_at) VALUES ('a7973606-e277-411f-a0c3-94f66f76067c', '2026-11-21', NULL, '2026-11-21T12:10:00.000Z');
+INSERT INTO queue_state (doctor_id, date, now_serving_id, updated_at) VALUES ('6e33331d-c111-4e1f-90e7-5edce5f2c513', '2026-11-21', NULL, '2026-11-21T12:10:00.000Z');
+INSERT INTO queue_state (doctor_id, date, now_serving_id, updated_at) VALUES ('449686b1-9efa-4db4-8a4f-476934c3bf6b', '2026-11-21', NULL, '2026-11-21T12:10:00.000Z');
+INSERT INTO queue_state (doctor_id, date, now_serving_id, updated_at) VALUES ('361db253-7907-49bb-b6ad-52fc4f651516', '2026-11-21', NULL, '2026-11-21T12:10:00.000Z');
+INSERT INTO queue_state (doctor_id, date, now_serving_id, updated_at) VALUES ('324b840d-1cc8-4775-aa9a-895634368637', '2026-11-21', NULL, '2026-11-21T12:10:00.000Z');
+INSERT INTO queue_state (doctor_id, date, now_serving_id, updated_at) VALUES ('934d9e7d-7a3e-447a-b995-631ffb3b5e88', '2026-11-21', NULL, '2026-11-21T12:10:00.000Z');
+INSERT INTO queue_state (doctor_id, date, now_serving_id, updated_at) VALUES ('29043842-761d-4848-8db4-9790e81d243b', '2026-11-21', NULL, '2026-11-21T12:10:00.000Z');
+INSERT INTO queue_state (doctor_id, date, now_serving_id, updated_at) VALUES ('ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', '2026-11-21', NULL, '2026-11-21T12:10:00.000Z');
+
+-- Staff Users (24, bcrypt-hashed)
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('533ec3f0-2884-4a65-b4f6-d103b183a75c', 'Hospital Admin', 'admin', '$2a$10$7XmiDvwUxR1byVaPKKzjre8MCwlyEJsj2LAoavhzop2uFsIvar6wq', 'admin', NULL, true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('0d46e666-1eb6-4774-b685-84524626179d', 'Front Desk', 'frontdesk', '$2a$10$baBOseGJPVV1/gLTGbilaeDGkXjRrFjAvV1VqFMM/1C3am7YeVMES', 'front_desk', NULL, true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('ccc42d0e-3054-4e4f-9ef0-c7b66d1aae74', 'Dr. Mahmudul Hasan', 'dr.mahmudul', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', 'd754a2c1-c48b-4163-af33-b533dc3995b7', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('36191b21-7748-46f0-bc5e-68684ad7aebf', 'Dr. Sharmin Akter', 'dr.sharmin', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '63411d81-e8d1-45c2-941e-a6c8062b0d95', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('5fbb74ed-bf47-4393-81ae-9cd750176c93', 'Dr. Arifur Rahman', 'dr.arifur', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '1df430f6-e02f-4bdb-86bd-e4a833c8344a', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('fc842837-62ae-4789-8377-689a236401ef', 'Dr. Rezaul Karim', 'dr.rezaul', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '190d7ef5-d47d-4f9e-99d1-332d8e84a1b1', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('69769c8f-f953-4ded-80ec-b9eaf375c754', 'Dr. Nadia Islam', 'dr.nadia', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', 'cde5c4ba-9ee8-48b3-853b-6060216dc72f', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('b8cb2cbe-2aa1-47ad-ab8a-7c333db4a06a', 'Dr. Anisur Rahman', 'dr.anisur', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '57dbcfce-ad0e-4c98-8d2f-78b26ae72471', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('70993414-f764-435b-821f-139a44bf1138', 'Dr. Lubna Yasmin', 'dr.lubna', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', 'a7973606-e277-411f-a0c3-94f66f76067c', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('f1e76464-1ba9-4a0d-871b-36d57dba93fa', 'Dr. Tanvir Hasan', 'dr.tanvir', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '6e33331d-c111-4e1f-90e7-5edce5f2c513', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('ca01c602-987d-4b0f-9370-2b46b569f6fc', 'Dr. Farzana Chowdhury', 'dr.farzana', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '937766e2-c060-4f5a-8923-48d5ece2bce7', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('13efc573-84ed-4c1c-984c-2616e7bbf676', 'Dr. Kamrul Islam', 'dr.kamrul', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '449686b1-9efa-4db4-8a4f-476934c3bf6b', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('c0d67449-5dd1-45c0-893d-e15b9429aabd', 'Dr. Sabrina Haque', 'dr.sabrina', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', 'e8d25b68-340a-43f7-a9eb-a81eb23f6868', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('cee3833c-d242-4c2f-a5eb-4b6158512849', 'Dr. Rokeya Begum', 'dr.rokeya', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '361db253-7907-49bb-b6ad-52fc4f651516', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('574d5dce-96dc-4dd3-b3c1-7e85b3dbd240', 'Dr. Tahmina Ahmed', 'dr.tahmina', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '153661fe-dc6d-40dc-ada0-53fdcdaa4965', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('46b836c2-ef08-4da9-b06d-bdf9049ea915', 'Dr. Shafiqul Alam', 'dr.shafiqul', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '324b840d-1cc8-4775-aa9a-895634368637', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('6feb5fa8-ba57-4728-a97a-4b49a88759ac', 'Dr. Ishrat Jahan', 'dr.ishrat', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '1dbd1dff-e070-4b1e-902a-eb8b0eb98a79', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('85b3c2df-d2c1-4e64-a97f-cb4720c3582f', 'Dr. Abdul Mannan', 'dr.abdul', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '044f6914-db23-4c7a-8a51-c59a76c874e6', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('028096a8-4862-4977-a74f-7d7c36484b69', 'Dr. Sumaiya Rahman', 'dr.sumaiya', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '934d9e7d-7a3e-447a-b995-631ffb3b5e88', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('652a8ee7-1b7f-4700-a2ad-a645cf8e8b12', 'Dr. Mizanur Rahman', 'dr.mizanur', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '8f652753-cdde-4c22-993a-26b8bba0fa74', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('1cb84cf7-3e34-4939-80ca-d7a766174474', 'Dr. Shahana Parvin', 'dr.shahana', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '29043842-761d-4848-8db4-9790e81d243b', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('90c4feb1-0806-4740-8058-5f9a946ec0ef', 'Dr. Jahangir Alam', 'dr.jahangir', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', 'ee69add2-dac8-49cb-8a7a-01c4b3b82cd1', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('02a42a63-54a8-46cc-bb27-a2e4bd3be69b', 'Dr. Rafiqul Islam', 'dr.rafiqul', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '9a93720c-fd67-41fa-b34c-cb22844a0b46', true);
+INSERT INTO staff_user (id, name, username, password_hash, role, doctor_id, active) VALUES ('24e764c2-8e02-4a68-bfee-7b35cf24dc62', 'Dr. Moinul Hossain', 'dr.moinul', '$2a$10$e4GZA2C0xt5BVRjIdS1In.k8rrA19VuQyPC5h1n1HaXyKemKnGQpa', 'doctor', '6cb7ff7e-94fa-4242-9469-5ae23b900dfe', true);
+
+-- Recent SMS Messages (0)
+
+-- Settings
+INSERT INTO setting (key, value) VALUES ('reminder', '{"daysBefore":1,"time":"19:00"}'::jsonb);
+INSERT INTO setting (key, value) VALUES ('booking', '{"openDays":14,"closeMinutesBefore":60}'::jsonb);
+
+COMMIT;

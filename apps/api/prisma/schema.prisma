@@ -1,0 +1,209 @@
+// Prisma schema mirror of apps/api/db/migrations/001_init.sql (PostgreSQL 16+).
+// Note: partial unique index `appointment_one_per_slot` is enforced in SQL migration 001_init.sql.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Specialty {
+  id             String          @id
+  nameEn         String          @map("name_en")
+  nameBn         String          @map("name_bn")
+  descriptionEn  String          @default("") @map("description_en")
+  descriptionBn  String          @default("") @map("description_bn")
+  sortOrder      Int             @default(0) @map("sort_order") @db.SmallInt
+  active         Boolean         @default(true)
+  doctors        Doctor[]
+  triageSessions TriageSession[]
+
+  @@map("specialty")
+}
+
+model Doctor {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nameEn          String         @map("name_en")
+  nameBn          String         @map("name_bn")
+  specialtyId     String         @map("specialty_id")
+  designationEn   String         @default("") @map("designation_en")
+  designationBn   String         @default("") @map("designation_bn")
+  qualifications  String         @default("")
+  experienceYears Int            @default(0) @map("experience_years") @db.SmallInt
+  fee             Int            @default(0)
+  gender          String         @default("male")
+  active          Boolean        @default(true)
+  specialty       Specialty      @relation(fields: [specialtyId], references: [id])
+  schedule        ScheduleRule[]
+  leaveDays       LeaveDay[]
+  appointments    Appointment[]
+  queueStates     QueueState[]
+  staffUsers      StaffUser[]
+
+  @@map("doctor")
+}
+
+model ScheduleRule {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  doctorId    String   @map("doctor_id") @db.Uuid
+  weekday     Int      @db.SmallInt
+  startTime   DateTime @map("start_time") @db.Time()
+  endTime     DateTime @map("end_time") @db.Time()
+  slotMinutes Int      @map("slot_minutes") @db.SmallInt
+  maxPatients Int      @map("max_patients") @db.SmallInt
+  room        String   @default("")
+  doctor      Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId, weekday, startTime], map: "idx_schedule_rule_doctor")
+  @@map("schedule_rule")
+}
+
+model LeaveDay {
+  id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  doctorId String   @map("doctor_id") @db.Uuid
+  date     DateTime @db.Date
+  reason   String   @default("")
+  doctor   Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@unique([doctorId, date])
+  @@map("leave_day")
+}
+
+model Patient {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String
+  phone           String          @unique
+  age             Int             @db.SmallInt
+  sex             String
+  registeredBy    String          @default("self") @map("registered_by")
+  phoneVerifiedAt DateTime?       @map("phone_verified_at") @db.Timestamptz()
+  appointments    Appointment[]
+  triageSessions  TriageSession[]
+
+  @@map("patient")
+}
+
+model TriageSession {
+  id                  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId           String?       @map("patient_id") @db.Uuid
+  lang                String        @default("en")
+  problem             String
+  answers             Json          @default("[]")
+  status              String
+  pendingQuestion     String?       @map("pending_question")
+  pendingQuickReplies Json?         @map("pending_quick_replies")
+  pendingKind         String?       @map("pending_kind")
+  specialtyId         String?       @map("specialty_id")
+  urgency             String?
+  explanation         String?
+  tags                String[]      @default([])
+  emergencyMatches    String[]      @map("emergency_matches")
+  summary             Json?
+  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz()
+  patient             Patient?      @relation(fields: [patientId], references: [id])
+  specialty           Specialty?    @relation(fields: [specialtyId], references: [id])
+  appointments        Appointment[]
+
+  @@index([createdAt], map: "idx_triage_session_created_at")
+  @@map("triage_session")
+}
+
+model Appointment {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  patientId         String         @map("patient_id") @db.Uuid
+  doctorId          String         @map("doctor_id") @db.Uuid
+  date              DateTime       @db.Date
+  startTime         DateTime       @map("start_time") @db.Time()
+  endTime           DateTime       @map("end_time") @db.Time()
+  serial            Int            @db.SmallInt
+  status            String
+  source            String         @default("online")
+  holdExpiresAt     DateTime?      @map("hold_expires_at") @db.Timestamptz()
+  triageId          String?        @map("triage_id") @db.Uuid
+  rescheduledFromId String?        @map("rescheduled_from_id") @db.Uuid
+  cancelReason      String?        @map("cancel_reason")
+  calledAt          DateTime?      @map("called_at") @db.Timestamptz()
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz()
+  patient           Patient        @relation(fields: [patientId], references: [id])
+  doctor            Doctor         @relation(fields: [doctorId], references: [id])
+  triage            TriageSession? @relation(fields: [triageId], references: [id])
+  rescheduledFrom   Appointment?   @relation("Reschedule", fields: [rescheduledFromId], references: [id])
+  rescheduledTo     Appointment[]  @relation("Reschedule")
+  queueStates       QueueState[]
+  smsMessages       SmsMessage[]
+
+  @@index([doctorId, date, serial], map: "idx_appointment_doctor_date_serial")
+  @@index([patientId, date], map: "idx_appointment_patient_date")
+  @@index([date, status], map: "idx_appointment_date_status")
+  @@map("appointment")
+}
+
+model QueueState {
+  doctorId     String       @map("doctor_id") @db.Uuid
+  date         DateTime     @db.Date
+  nowServingId String?      @map("now_serving_id") @db.Uuid
+  updatedAt    DateTime     @default(now()) @map("updated_at") @db.Timestamptz()
+  doctor       Doctor       @relation(fields: [doctorId], references: [id])
+  nowServing   Appointment? @relation(fields: [nowServingId], references: [id])
+
+  @@id([doctorId, date])
+  @@map("queue_state")
+}
+
+model StaffUser {
+  id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  username     String  @unique
+  passwordHash String  @map("password_hash")
+  role         String
+  doctorId     String? @map("doctor_id") @db.Uuid
+  active       Boolean @default(true)
+  doctor       Doctor? @relation(fields: [doctorId], references: [id])
+
+  @@map("staff_user")
+}
+
+model SmsMessage {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  phone         String
+  kind          String
+  body          String
+  appointmentId String?      @map("appointment_id") @db.Uuid
+  status        String       @default("sent")
+  sentAt        DateTime     @default(now()) @map("sent_at") @db.Timestamptz()
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+
+  @@index([sentAt(sort: Desc)], map: "idx_sms_message_sent_at")
+  @@map("sms_message")
+}
+
+model OtpCode {
+  phone     String   @id
+  codeHash  String   @map("code_hash")
+  expiry    DateTime @db.Timestamptz()
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@map("otp_code")
+}
+
+model Setting {
+  key   String @id
+  value Json
+
+  @@map("setting")
+}
+
+model UserSession {
+  id        String   @id
+  kind      String
+  subjectId String?  @map("subject_id") @db.Uuid
+  phone     String?
+  expiresAt DateTime @map("expires_at") @db.Timestamptz()
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@map("user_session")
+}

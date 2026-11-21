@@ -1,117 +1,43 @@
+import { Router } from 'express'
+import type { AuthMiddleware } from '../middleware/staff-auth.middleware.ts'
+import type { HospitalService } from '../services/hospital.ts'
 
-import { Router } from "express";
+export function createFrontdeskRoutes(service: HospitalService, auth: AuthMiddleware) {
+  const router = Router()
+  router.use(auth.requireStaff(['front_desk', 'admin']))
 
-import {
-  getDailyAppointments,
-  findFrontdeskAppointment,
-  updateAppointmentStatus
-} from "../services/frontdesk.service.js";
+  // GET /api/v1/frontdesk/day?doctorId=&date=
+  router.get('/day', async (req, res) => {
+    const doctorId = typeof req.query.doctorId === 'string' ? req.query.doctorId : ''
+    const date = typeof req.query.date === 'string' ? req.query.date : ''
+    res.json(await service.daySheet(doctorId, date))
+  })
 
-import { findDoctor } from "../services/doctor.service.js";
-import { requireStaff } from "../middleware/staff-auth.middleware.js";
+  // POST /api/v1/frontdesk/appointments/:id/status
+  router.post('/appointments/:id/status', async (req, res) => {
+    res.json(await service.setStatus(String(req.params.id), req.body ?? {}))
+  })
 
-const router = Router();
+  // POST /api/v1/frontdesk/queue/next
+  router.post('/queue/next', async (req, res) => {
+    res.json(await service.callNext(req.body ?? {}))
+  })
 
-const validDate = (date: string): boolean => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return false;
-  }
+  // GET /api/v1/frontdesk/patients?phone=
+  router.get('/patients', async (req, res) => {
+    const phone = typeof req.query.phone === 'string' ? req.query.phone : null
+    res.json(await service.findPatient(phone))
+  })
 
-  const parsed = new Date(`${date}T00:00:00.000Z`);
+  // POST /api/v1/frontdesk/patients
+  router.post('/patients', async (req, res) => {
+    res.status(201).json(await service.createPatient(req.body ?? {}))
+  })
 
-  return !Number.isNaN(parsed.getTime()) &&
-    parsed.toISOString().slice(0, 10) === date;
-};
+  // POST /api/v1/frontdesk/appointments
+  router.post('/appointments', async (req, res) => {
+    res.status(201).json(await service.bookForPatient(req.body ?? {}))
+  })
 
-// GET /api/v1/frontdesk/day
-// View daily appointments
-router.get("/day", requireStaff(["admin", "front_desk"]), (req, res) => {
-  const doctorId = req.query.doctorId;
-  const date = req.query.date;
-
-  if (
-    typeof doctorId !== "string" ||
-    typeof date !== "string" ||
-    !validDate(date)
-  ) {
-    return res.status(400).json({
-      error: {
-        code: "VALIDATION",
-        message: "A valid doctorId and date are required."
-      }
-    });
-  }
-
-  const doctor = findDoctor(doctorId);
-
-  if (!doctor) {
-    return res.status(404).json({
-      error: {
-        code: "NOT_FOUND",
-        message: "Doctor not found."
-      }
-    });
-  }
-
-  const appointments = getDailyAppointments(doctorId, date);
-
-  return res.status(200).json({
-    doctorId,
-    doctorName: doctor.name_en,
-    date,
-    totalAppointments: appointments.length,
-    appointments
-  });
-});
-
-// PATCH /api/v1/frontdesk/appointments/:id/status
-// Update appointment status
-router.patch(
-  "/appointments/:id/status",
-  requireStaff(["admin", "front_desk"]),
-  (req, res) => {
-    const id = String(req.params.id);
-    const { status } = req.body;
-
-    const appointment = findFrontdeskAppointment(id);
-
-    if (!appointment) {
-      return res.status(404).json({
-        error: {
-          code: "NOT_FOUND",
-          message: "Appointment not found."
-        }
-      });
-    }
-
-    const allowedTransitions: Record<string, string[]> = {
-      booked: ["arrived", "cancelled", "no_show"],
-      arrived: ["in_consultation", "no_show"],
-      in_consultation: ["seen"]
-    };
-
-    if (
-      typeof status !== "string" ||
-      !allowedTransitions[appointment.status]?.includes(status)
-    ) {
-      return res.status(400).json({
-        error: {
-          code: "VALIDATION",
-          message: "This appointment status transition is not allowed."
-        }
-      });
-    }
-
-    const updated = updateAppointmentStatus(
-      id,
-      status as "arrived" | "in_consultation" | "seen" | "no_show" | "cancelled"
-    );
-
-    return res.status(200).json({
-      message: "Appointment status updated successfully.",
-      appointment: updated
-    });
-  }
-);
-
-export default router;
+  return router
+}
