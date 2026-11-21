@@ -1,0 +1,41 @@
+# Render Blueprint — 1-click full-stack deployment (PostgreSQL 16 + Dockerized Web + API + Socket.IO)
+# Deploy from Render Dashboard -> New -> Blueprint -> connect this GitHub repo.
+
+databases:
+  - name: lumina-db
+    plan: free
+    databaseName: lumina_hospital
+    user: lumina
+
+services:
+  - type: web
+    name: lumina-hospital
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SERVE_STATIC
+        value: 'true'
+      - key: COOKIE_SECURE
+        value: 'true'
+      - key: AUTO_SEED
+        value: 'true'
+      - key: EXPOSE_DEMO_OTP
+        value: 'true'
+      - key: ENABLE_SCHEDULER
+        value: 'true'
+      - key: DATABASE_SSL
+        value: 'true'
+      - key: AI_PROVIDER
+        value: mock
+      - key: STT_PROVIDER
+        value: mock
+      - key: SMS_PROVIDER
+        value: sandbox
+      - key: DATABASE_URL
+        fromDatabase:
+          name: lumina-db
+          property: connectionString

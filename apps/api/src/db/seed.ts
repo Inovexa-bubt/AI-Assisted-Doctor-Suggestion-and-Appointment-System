@@ -121,71 +121,96 @@ export async function seedDatabase(
       )
     }
 
-    for (const p of patients) {
-      await tx.query(
-        `INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          patientUuid(p.id),
-          p.name,
-          p.phone,
-          p.age,
-          p.sex,
-          p.registeredBy,
-          p.registeredBy === 'self' ? (options.now ?? new Date()).toISOString() : null,
-        ],
-      )
+    const chunkedInsert = async <T>(
+      items: T[],
+      cols: number,
+      build: (item: T) => unknown[],
+      prefix: string,
+      casts: string[] = [],
+      chunkSize = 200,
+    ) => {
+      for (let i = 0; i < items.length; i += chunkSize) {
+        const slice = items.slice(i, i + chunkSize)
+        const params: unknown[] = []
+        const tuples: string[] = []
+        for (const item of slice) {
+          const vals = build(item)
+          const placeholders = vals.map((_, idx) => {
+            const p = `$${params.length + idx + 1}`
+            return casts[idx] ? `${p}${casts[idx]}` : p
+          })
+          params.push(...vals)
+          tuples.push(`(${placeholders.join(', ')})`)
+        }
+        if (tuples.length > 0 && cols > 0) {
+          await tx.query(`${prefix} VALUES ${tuples.join(', ')}`, params)
+        }
+      }
     }
 
-    for (const t of triage) {
-      const pid = t.patientId && patientSet.has(t.patientId) ? patientUuid(t.patientId) : null
-      await tx.query(
-        `INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10::text[], $11::text[], $12::jsonb, $13)`,
-        [
-          triageUuid(t.id),
-          pid,
-          t.lang,
-          t.problem,
-          JSON.stringify(t.answers.map(({ question, answer }) => ({ question, answer }))),
-          t.status,
-          t.specialtyId ?? null,
-          t.urgency ?? null,
-          t.explanation ?? null,
-          t.tags,
-          t.emergencyMatches ?? null,
-          t.summary ? JSON.stringify(t.summary) : null,
-          t.createdAt,
-        ],
-      )
-    }
+    const nowIso = (options.now ?? new Date()).toISOString()
+    await chunkedInsert(
+      patients,
+      7,
+      (p) => [
+        patientUuid(p.id),
+        p.name,
+        p.phone,
+        p.age,
+        p.sex,
+        p.registeredBy,
+        p.registeredBy === 'self' ? nowIso : null,
+      ],
+      'INSERT INTO patient (id, name, phone, age, sex, registered_by, phone_verified_at)',
+    )
+
+    await chunkedInsert(
+      triage,
+      13,
+      (t) => [
+        triageUuid(t.id),
+        t.patientId && patientSet.has(t.patientId) ? patientUuid(t.patientId) : null,
+        t.lang,
+        t.problem,
+        JSON.stringify(t.answers.map(({ question, answer }) => ({ question, answer }))),
+        t.status,
+        t.specialtyId ?? null,
+        t.urgency ?? null,
+        t.explanation ?? null,
+        t.tags,
+        t.emergencyMatches ?? null,
+        t.summary ? JSON.stringify(t.summary) : null,
+        t.createdAt,
+      ],
+      'INSERT INTO triage_session (id, patient_id, lang, problem, answers, status, specialty_id, urgency, explanation, tags, emergency_matches, summary, created_at)',
+      ['', '', '', '', '::jsonb', '', '', '', '', '::text[]', '::text[]', '::jsonb', ''],
+    )
 
     const validTriageIds = new Set(triage.map((t) => t.id))
-    for (const a of appointments) {
-      await tx.query(
-        `INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
-        [
-          apptUuid(a.id),
-          patientUuid(a.patientId),
-          doctorUuid(a.doctorId),
-          a.date,
-          a.start,
-          a.end,
-          a.serial,
-          a.status,
-          a.source,
-          a.holdExpiresAt ?? null,
-          a.triageId && validTriageIds.has(a.triageId) ? triageUuid(a.triageId) : null,
-          a.rescheduledFromId && apptSet.has(a.rescheduledFromId)
-            ? apptUuid(a.rescheduledFromId)
-            : null,
-          a.cancelReason ?? null,
-          a.calledAt ?? null,
-          a.createdAt,
-        ],
-      )
-    }
+    await chunkedInsert(
+      appointments,
+      15,
+      (a) => [
+        apptUuid(a.id),
+        patientUuid(a.patientId),
+        doctorUuid(a.doctorId),
+        a.date,
+        a.start,
+        a.end,
+        a.serial,
+        a.status,
+        a.source,
+        a.holdExpiresAt ?? null,
+        a.triageId && validTriageIds.has(a.triageId) ? triageUuid(a.triageId) : null,
+        a.rescheduledFromId && apptSet.has(a.rescheduledFromId)
+          ? apptUuid(a.rescheduledFromId)
+          : null,
+        a.cancelReason ?? null,
+        a.calledAt ?? null,
+        a.createdAt,
+      ],
+      'INSERT INTO appointment (id, patient_id, doctor_id, date, start_time, end_time, serial, status, source, hold_expires_at, triage_id, rescheduled_from_id, cancel_reason, called_at, created_at)',
+    )
 
     for (const q of data.queue) {
       const servingId =

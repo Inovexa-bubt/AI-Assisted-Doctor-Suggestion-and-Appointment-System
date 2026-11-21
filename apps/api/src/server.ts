@@ -13,11 +13,11 @@ import { HospitalService } from './services/hospital.ts'
 
 async function main() {
   const config = loadConfig()
-  const db = await createDb(config.databaseUrl)
+  const db = await createDb(config.databaseUrl, { ssl: config.databaseSsl })
   await runMigrations(db)
 
-  // Auto-seed an empty local database so first run works out of the box.
-  if (config.nodeEnv !== 'production') {
+  // Auto-seed an empty database when AUTO_SEED=true (or non-production) so first deploy works out of the box.
+  if (config.autoSeed) {
     const { seeded } = await seedDatabase(db, { onlyIfEmpty: true })
     if (seeded) console.log('[api] database was empty — seeded with sample data.')
   }
@@ -32,7 +32,7 @@ async function main() {
     ai,
     sms,
     queue,
-    exposeDemoOtp: sms.isSandbox && config.nodeEnv !== 'production',
+    exposeDemoOtp: config.exposeDemoOtp,
   })
   const app = createApp({ service, stt, config })
   const httpServer = createServer(app)

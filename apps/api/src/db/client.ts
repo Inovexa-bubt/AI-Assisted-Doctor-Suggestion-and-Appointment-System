@@ -39,9 +39,16 @@ export function asIso(val: unknown): string {
   return new Date(String(val)).toISOString()
 }
 
-export async function createDb(databaseUrl: string): Promise<Db> {
+export async function createDb(databaseUrl: string, opts: { ssl?: boolean } = {}): Promise<Db> {
   if (databaseUrl.startsWith('postgres://') || databaseUrl.startsWith('postgresql://')) {
-    const pool = new pg.Pool({ connectionString: databaseUrl })
+    const needsSsl =
+      opts.ssl ||
+      /sslmode=(require|verify-ca|verify-full)/i.test(databaseUrl) ||
+      /\.(render\.com|neon\.tech|supabase\.co)/i.test(databaseUrl)
+    const pool = new pg.Pool({
+      connectionString: databaseUrl,
+      ...(needsSsl ? { ssl: { rejectUnauthorized: false } } : {}),
+    })
     return {
       driver: 'pg',
       async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []) {
