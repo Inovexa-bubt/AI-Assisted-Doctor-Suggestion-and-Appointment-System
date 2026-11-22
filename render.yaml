@@ -30,9 +30,13 @@ services:
       - key: DATABASE_SSL
         value: 'true'
       - key: AI_PROVIDER
-        value: mock
+        value: gemini
       - key: STT_PROVIDER
-        value: mock
+        value: gemini
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: GEMINI_API_KEY
+        sync: false
       - key: SMS_PROVIDER
         value: sandbox
       - key: DATABASE_URL
